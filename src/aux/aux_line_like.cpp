@@ -69,7 +69,7 @@ bool line_like(string model_line, vector<string> &tokens,
     }
     else if (model_tokens[i] == "$anyVar") // $anyVar is any variable (scalar or container)
     {
-      if (!variable_exists(tokens[j], state))
+      if (!variable_exists(tokens[j], state) || is_constant(tokens[j], state))
         return false;
     }
     else if (model_tokens[i] == "$scalar-map")
@@ -165,13 +165,20 @@ bool line_like(string model_line, vector<string> &tokens,
     {
       vector<unsigned int> actual_type = variable_type(tokens[j], state);
       string expected_type = model_tokens[i].substr(10);
-      if (actual_type.size() != expected_type.length())
-        return false;
-      for (size_t t = 0; t < actual_type.size(); ++t)
+      vector<unsigned int> expected_types;
+      if (expected_type.find(',') == string::npos)
       {
-        if ((int)actual_type[t] != expected_type[t] - '0')
-          return false;
+        // Backward compatibility with the original single-digit encoding.
+        for (char type : expected_type) expected_types.push_back(type - '0');
       }
+      else
+      {
+        string item;
+        stringstream encoded(expected_type);
+        while (getline(encoded, item, ','))
+          if (!item.empty()) expected_types.push_back(stoul(item));
+      }
+      if (actual_type != expected_types) return false;
     }
     else if (model_tokens[i] == "$natural") // $natural is an integer greater than 0
     {

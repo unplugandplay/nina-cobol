@@ -3,6 +3,40 @@
     to be easier on the eyes. All UPPERCASE statement names and code should
     be changed to lowercase.
 
+## `FIND _ IN _ INTO _`
+
+`FIND` stores the zero-based position of the first matching value, or `-1` if
+the value is absent. The value must have exactly the list's element type.
+
+```coffeescript
+FIND "cat" IN animals INTO position
+```
+
+## `REMOVE _ FROM _`
+
+`REMOVE` deletes the first matching value. It does nothing when the value is
+not present.
+
+```coffeescript
+REMOVE "cat" FROM animals
+```
+
+## `SORT _`
+
+`SORT` orders a list of numbers or text in ascending order.
+
+```coffeescript
+SORT animals
+```
+
+## `REVERSE _`
+
+`REVERSE` reverses a list of any element type in place.
+
+```coffeescript
+REVERSE animals
+```
+
 ## `PUSH _ TO _`
 
 The `PUSH - TO` statement is used to add elements to a LIST. When you push an element to a LIST it is appended at the end of the list.

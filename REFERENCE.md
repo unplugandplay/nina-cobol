@@ -29,7 +29,9 @@ An LDPL program is organised into declarative and executable sections. Only one 
 - **Data section:** Begins with `DATA:` or `-- DATA --`. Each line declares one variable and its type. External variables may be marked with the keyword `EXTERNAL` (see “C++ Extensions”).
 - **Procedure section:** Begins with `PROCEDURE` or `-- PROCEDURE --`. Statements in this section execute in order. Code appearing before any sub‑procedure executes at program start. You may define sub‑procedures within this section.
 - **Sub‑procedures:** A sub‑procedure is defined using `SUB‑PROCEDURE Name` (or the short form `SUB Name`) and ends with `END SUB‑PROCEDURE` (or `END SUB`). Each sub‑procedure may optionally contain a `PARAMETERS:` section listing parameter names and a `LOCAL DATA:` section declaring local variables; you may also use the alternate header forms `-- PARAMETERS --` and `-- LOCAL DATA --`. Sub‑procedures cannot be nested inside other sub‑procedures or within control flow blocks.
+- **Structures:** Named structures are declared before the `DATA` and `PROCEDURE` sections using `STRUCTURE Name` … `END STRUCTURE`. A structure contains named, statically typed fields. A field may be a number, text, list, map, or a previously declared structure.
 - **Include files:** Use `INCLUDE "file.ldpl"` to copy the contents of another LDPL file into the current one. The `include` statement must appear before the *DATA* section of the including file. Each LDPL source file must declare its own *DATA* and *PROCEDURE* sections (or their synonyms `-- DATA --` and `-- PROCEDURE --`). The *DATA* section may be omitted if no variables are declared.
+- **Modules:** `IMPORT Name FROM "file.ldpl"` (or `IMPORT "file.ldpl" AS Name`) compiles a source file in a namespace. Exported values, structures, constants, and sub-procedures are accessed with qualified names such as `HTTP:status`, `HTTP:Response`, and `CALL HTTP:GET`. Imports must appear before `DATA` and `PROCEDURE`.
 - **C++ extensions:** The `EXTENSION "file.cpp"` statement (see “C++ Extensions”) includes C++ source files before compilation. Use `FLAG "-lSDL2"` to pass additional flags to the C++ compiler; you may prefix a flag with an operating system name (e.g., `FLAG windows "-lSDL2"`) to apply it only on that platform.
 
 ## Data Types and Variables
@@ -40,8 +42,11 @@ LDPL variables are declared in the data or local data sections with the syntax `
 - **Text:** UTF‑8 encoded string. A text variable starts as an empty string.
 - **List:** Dynamic, ordered container. Declare a list as `list of number`, `list of text`, or nested containers such as `list of list of number` and `list of map of text`. A list begins empty.
 - **Map:** Associative container (dictionary) mapping keys to values. Declare a map as `map of number`, `map of text`, or nested forms. Map keys may be numbers or text.
+- **Structure:** A heterogeneous group of named fields. Declare a variable using a previously declared structure name, for example `customer is Person`. Structures may be nested and may be used as list or map element types.
 
 Nested types are written from the outermost container inward (e.g., a `list of map of text` is a list whose elements are maps from text to text). Only one variable may be declared per line. Collections are initially empty. LDPL provides the following predefined variables:
+
+Immutable scalar constants are declared in the `DATA` section with `name IS CONSTANT NUMBER WITH VALUE <number>` or `name IS CONSTANT TEXT WITH VALUE <text>`. Constants may be read anywhere a scalar expression is accepted but cannot be used as assignment destinations. When passed to a sub-procedure, a mutable temporary copy is passed, just as it is for a literal.
 
 - `argv` – a list containing command‑line arguments.
 - `errorcode` (number) – stores the result of file and system operations; `0` indicates success.
@@ -71,6 +76,7 @@ LDPL provides several statements for controlling program execution.
 ### Assignment
 
 - `STORE <expression> IN <variable>` – evaluates an expression and assigns the result to a variable. Expressions may be numeric or text. The reverse form `IN <variable> STORE <expression>` is equivalent.
+- `COPY <aggregate> TO <aggregate>` – copies an entire structure or collection to another value of exactly the same type. Structure copies are deep value copies, including nested structures, lists, and maps.
 
 ### Conditional Statements
 
@@ -86,6 +92,14 @@ LDPL provides several statements for controlling program execution.
 - **For‑each loop:** `FOR EACH <itemVar> IN <collection> DO` … `REPEAT` iterates over every element in a list or every key in a map. When iterating over a map, the iteration variable must be of type `text` and will receive each key.
 - **BREAK:** exits the nearest enclosing `WHILE`, `FOR` or `FOR EACH` loop. Using `BREAK` outside a loop is a compile‑time error.
 - **CONTINUE:** skips the remainder of the current iteration and proceeds to the next iteration of the nearest loop. Using `CONTINUE` outside a loop is a compile‑time error.
+
+### Error Handling
+
+- `TRY` … `ON ERROR` … `END TRY` runs the first block and transfers immediately to the handler when an operation reports a nonzero `ERRORCODE` or executes `RAISE ERROR`. The handler can inspect `ERRORCODE` and `ERRORTEXT`. Finishing `END TRY` marks the error handled and clears both values.
+- `RAISE ERROR <text>` creates an error with code `1` and the supplied message. It is valid inside a `TRY` body or handler.
+- `RAISE ERROR` inside `ON ERROR` re-raises the current error to an enclosing handler.
+
+Error handling applies to LDPL operations that report errors through `ERRORCODE` and to explicitly raised errors. Fatal runtime failures such as an out-of-range list access remain fatal.
 
 ### Labels and Goto
 
@@ -162,6 +176,10 @@ Lists are ordered, growable collections. Elements are accessed by zero‑based i
 - `REMOVE ELEMENT AT <index> FROM <list>` – removes the element at the given index if it is within bounds.
 - `CLEAR <collection>` – empties a list or map without deleting the collection itself.
 - `COPY <sourceCollection> TO <destinationCollection>` – overwrites `<destinationCollection>` with a copy of `<sourceCollection>`. Both collections must have the same type.
+- `FIND <value> IN <list> INTO <numberVar>` – stores the zero-based position of the first equal value, or `-1` when it is absent. Scalar and structure values are supported when their type exactly matches the list element type.
+- `REMOVE <value> FROM <list>` – removes the first equal value, leaving the list unchanged when it is absent.
+- `SORT <list>` – sorts a list of numbers or text in ascending order.
+- `REVERSE <list>` – reverses any list in place.
 
 ## Map Operations
 
@@ -187,6 +205,7 @@ LDPL programs are compiled to C++, so you can extend them with native code.
 
 - **Including C++ files:** The `EXTENSION "file.cpp"` statement includes a C++ source file in the compilation process. You may include multiple extension files. Additional compiler flags such as library links can be passed using `FLAG "-lSDL2"`. To apply a flag only on a specific platform, prefix the statement with the platform name (e.g., `FLAG windows "-lSDL2"`).
 - **External variables:** To share data between LDPL and C++, declare a variable in LDPL with the keyword `EXTERNAL`, for example `counter is external number`. In the C++ extension file declare the variable using the equivalent LDPL type: `ldpl_number` for numbers, `ldpl_text` for text, `ldpl_list<T>` for lists and `ldpl_map<T>` for maps, where `T` matches the element type.
+- **External structures:** An LDPL structure named `Person` is exposed to extensions as the C++ type `ldpl_structure_PERSON`; its field `name` is exposed as `VAR_NAME`. An external declaration such as `shared is external Person` therefore corresponds to a C++ definition such as `ldpl_structure_PERSON SHARED;`. Non-alphanumeric characters use the same identifier encoding rules as other generated LDPL identifiers.
 - **External functions:** In a C++ extension file, define a function with the exact signature `void NAME()`. External functions cannot accept parameters or return a value. Function names may contain only uppercase letters, digits and underscores. When you call the function from LDPL using `call external name`, the LDPL compiler converts `name` to its C++ form by capitalising letters and replacing punctuation with underscores—for example `call external window.rows` invokes `WINDOW_ROWS()`. If you need to call an LDPL sub‑procedure from C++, declare it in LDPL as `EXTERNAL SUB‑PROCEDURE Name` and forward‑declare it in C++ with `void NAME();`.
 - **Naming collisions:** Because non‑alphanumeric characters are converted to underscores and letters are capitalised, different LDPL identifiers such as `one.two`, `one/two` and `One‑Two` all map to the same C++ name `ONE_TWO`. Avoid such collisions when designing external APIs.
 

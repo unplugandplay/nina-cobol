@@ -1,0 +1,9 @@
+STRUCTURE Item
+    value IS NUMBER
+END STRUCTURE
+
+DATA:
+items IS LIST OF Item
+
+PROCEDURE
+SORT items

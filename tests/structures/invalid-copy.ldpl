@@ -1,0 +1,14 @@
+STRUCTURE Person
+    name IS TEXT
+END STRUCTURE
+
+STRUCTURE Address
+    city IS TEXT
+END STRUCTURE
+
+DATA:
+person IS Person
+address IS Address
+
+PROCEDURE
+COPY person TO address

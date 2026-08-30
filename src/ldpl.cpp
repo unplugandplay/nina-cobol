@@ -289,15 +289,28 @@ void compile(vector<string> &lines, compiler_state &state)
         if (tokens.size() == 0)
             continue;
         compile_line(tokens, state);
+        bool error_boundary =
+            (tokens.size() == 1 && tokens[0] == "TRY") ||
+            (tokens.size() == 2 && tokens[0] == "ON" && tokens[1] == "ERROR") ||
+            (tokens.size() == 2 && tokens[0] == "END" && tokens[1] == "TRY");
+        if (state.try_body_depth > 0 && state.error_handler_depth == 0 &&
+            !error_boundary)
+            state.add_code("if (VAR_ERRORCODE != 0) throw ldpl_error_signal();",
+                           state.where);
     }
     if (state.open_quote)
         error("a QUOTE block was not terminated.");
+    if (state.current_structure != "")
+        error("the STRUCTURE \"" + state.current_structure +
+              "\" was not terminated.");
     if (state.closing_subprocedure())
         error("a SUB-PROCEDURE block was not terminated.");
     if (state.closing_if())
         error("a IF block was not terminated.");
     if (state.closing_loop())
         error("a WHILE or FOR block was not terminated.");
+    if (state.try_body_depth > 0 || state.error_handler_depth > 0)
+        error("a TRY block was not terminated.");
 }
 
 // +-----------------------+
@@ -404,6 +417,7 @@ int main(int argc, const char *argv[])
     state.add_code("int main(int argc, char *argv[]){");
     state.add_code("cout.precision(numeric_limits<ldpl_number>::digits10);");
     state.add_code("program_start_time = std::chrono::steady_clock::now();");
+    state.add_var_code("struct ldpl_error_signal {};");
 
     // Add default variable declaration code to the generated code
     state.variables[""]["ARGV"] = {2, 3}; // List of text

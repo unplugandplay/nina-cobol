@@ -1,0 +1,13 @@
+EXTENSION "external.cpp"
+
+STRUCTURE Person
+    name IS TEXT
+    age IS NUMBER
+END STRUCTURE
+
+DATA:
+shared IS EXTERNAL Person
+
+PROCEDURE
+CALL EXTERNAL POPULATE
+DISPLAY shared:name " " shared:age LF

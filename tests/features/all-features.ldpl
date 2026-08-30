@@ -1,0 +1,80 @@
+IMPORT UTIL FROM "utility.ldpl"
+
+STRUCTURE Item
+    name IS TEXT
+    rank IS NUMBER
+END STRUCTURE
+
+DATA:
+APPLICATION IS CONSTANT TEXT WITH VALUE "LDPL"
+ANSWER IS CONSTANT NUMBER WITH VALUE 42
+contents IS TEXT
+position IS NUMBER
+numbers IS LIST OF NUMBER
+words IS LIST OF TEXT
+first IS Item
+second IS Item
+items IS LIST OF Item
+module-entry IS UTIL:Entry
+
+PROCEDURE
+DISPLAY APPLICATION " " ANSWER LF
+IN position SOLVE ANSWER + 1
+DISPLAY "solved " position LF
+CALL SHOW-CONSTANT WITH ANSWER
+CALL UTIL:INITIALIZE WITH module-entry
+DISPLAY module-entry:label " " module-entry:score " " UTIL:LIMIT LF
+
+TRY
+    LOAD FILE "this-file-must-not-exist.invalid" IN contents
+    DISPLAY "unreachable" LF
+ON ERROR
+    DISPLAY "caught " errorcode LF
+END TRY
+DISPLAY "cleared " errorcode LF
+
+TRY
+    TRY
+        RAISE ERROR "nested"
+    ON ERROR
+        RAISE ERROR
+    END TRY
+ON ERROR
+    DISPLAY "reraised " errortext LF
+END TRY
+
+PUSH 3 TO numbers
+PUSH 1 TO numbers
+PUSH 2 TO numbers
+PUSH 2 TO numbers
+SORT numbers
+FIND 2 IN numbers INTO position
+DISPLAY "found " position LF
+REMOVE 2 FROM numbers
+REVERSE numbers
+FOR EACH position IN numbers DO
+    DISPLAY position " "
+REPEAT
+DISPLAY LF
+
+PUSH "zebra" TO words
+PUSH "apple" TO words
+SORT words
+DISPLAY words:0 " " words:1 LF
+
+STORE "first" IN first:name
+STORE 1 IN first:rank
+COPY first TO second
+PUSH first TO items
+FIND second IN items INTO position
+DISPLAY "item " position LF
+REMOVE second FROM items
+GET LENGTH OF items IN position
+DISPLAY "remaining " position LF
+
+SUB-PROCEDURE SHOW-CONSTANT
+PARAMETERS:
+value IS NUMBER
+PROCEDURE
+DISPLAY "constant argument " value LF
+END SUB-PROCEDURE

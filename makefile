@@ -50,6 +50,7 @@ LDPLLIBLOCATION = /lib/ldpl
 
 # --- Compilation Flags ---
 FLAGS = -Wall -std=gnu++11 -fpermissive -DVERSION=$(VERSION) -DVERSIONNAME=$(VERSIONNAME) -DCOMPILEDATE='"$(shell date +%Y-%m-%d)"' -DCOMPILEHOUR='"$(shell date +%H:%M:%S)"' -DLPMLOCATION='"$(DESTDIR)$(PREFIX)$(LPMLOCATION)"' -DLDPLLIBLOCATION='"$(DESTDIR)$(PREFIX)$(LDPLLIBLOCATION)"'
+TEST_FLAGS = -Wall -std=gnu++11 -fpermissive -DVERSION=$(VERSION) -DVERSIONNAME=$(VERSIONNAME) -DCOMPILEDATE='"$(shell date +%Y-%m-%d)"' -DCOMPILEHOUR='"$(shell date +%H:%M:%S)"' -DLPMLOCATION='"/tmp"' -DLDPLLIBLOCATION='"$(CURDIR)/src/ldpl_lib"'
 
 # --- Build Rules ---
 # Build LDPL
@@ -57,6 +58,18 @@ all:
 	cd src && $(CXX) $(FLAGS) $(CROSS) $(SOURCE) -o $(OUT) $(LFLAGS)
 	mkdir -p build
 	mv src/$(OUT) build
+
+test-structures:
+	mkdir -p build
+	cd src && $(CXX) $(TEST_FLAGS) $(SOURCE) -o ../build/ldpl-test
+	sh tests/structures/run.sh ./build/ldpl-test
+
+test-features:
+	mkdir -p build
+	cd src && $(CXX) $(TEST_FLAGS) $(SOURCE) -o ../build/ldpl-test
+	sh tests/features/run.sh ./build/ldpl-test
+
+test: test-structures test-features
 
 # Delete built file
 clean:

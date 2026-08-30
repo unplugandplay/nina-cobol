@@ -26,7 +26,7 @@ string fix_identifier(string identifier, bool isVariable) {
 
 string fix_identifier(string identifier) {
   // -- Replaces invalid C++ characters in identifiers --
-  const string validChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890:";
+  const string validChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
   ostringstream new_id;
   for (unsigned int i = 0; i < identifier.size(); ++i) {
     if (validChars.find(identifier[i]) != string::npos) {
@@ -43,7 +43,7 @@ string fix_external_identifier(string identifier, bool isVariable) {
   // External identifiers are used by C++ extensions and thus have a simpler but
   // more restrictive name mangling algorithm: The only characters allowed are
   // `A-Z`, `0-9`, and `_`. All other characters are converted to `_`.
-  const string validChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890:";
+  const string validChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
   string new_id;
   for (unsigned int i = 0; i < identifier.size(); ++i) {
     if (validChars.find(identifier[i]) != string::npos) {

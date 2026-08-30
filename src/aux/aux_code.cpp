@@ -32,12 +32,19 @@ void add_call_code(string &subprocedure, vector<string> &parameters,
                    compiler_state &state) {
   string code = fix_identifier(subprocedure, false) + "(";
   for (size_t i = 0; i < parameters.size(); ++i) {
-    if (is_number(parameters[i]) || is_string(parameters[i])) {
+    bool number_literal = is_number(parameters[i]);
+    bool text_literal = is_string(parameters[i]);
+    bool constant = is_constant(parameters[i], state);
+    if (number_literal || text_literal || constant) {
       // C++ doen't allow passing literals in  reference parameters, we create
       // vars for them
       string literal_paramater_var = state.new_literal_parameter_var();
-      state.add_code((is_number(parameters[i]) ? "ldpl_number " : "graphemedText ") +
-                         literal_paramater_var + " = " + parameters[i] + ";",
+      bool number_value = number_literal ||
+                          (constant && variable_type(parameters[i], state) ==
+                                           vector<unsigned int>{1});
+      string value = constant ? get_c_variable(state, parameters[i]) : parameters[i];
+      state.add_code((number_value ? "ldpl_number " : "graphemedText ") +
+                         literal_paramater_var + " = " + value + ";",
                      state.where);
       code += literal_paramater_var;
     } else {

@@ -12,8 +12,20 @@ struct compiler_state {
       variables;  // map<subprocedure (or "" for main), map<variable name,
                   // vector<types>>> (variables are stored here)
   map<string, bool> externals;  // variables defined in c++ extensions
+  map<string, bool> constants;  // immutable NUMBER and TEXT declarations
+  map<string, string> constant_values;
+  string current_module = "";
+  map<string, bool> imported_modules;
   // 1 number, 2 text, 3 list, 4 map --> <2, 3, 4, 4> means, for example, map of
   // map of list of text
+  // Values greater than or equal to 5 identify user-defined structures.
+  unsigned int next_structure_type = 5;
+  string current_structure = "";
+  map<string, unsigned int> structure_types;  // structure name -> type id
+  map<unsigned int, string> structure_names;  // type id -> structure name
+  map<unsigned int, string> structure_c_types;  // type id -> generated C++ type
+  map<string, map<string, vector<unsigned int>>> structure_fields;
+  map<string, vector<string>> structure_field_order;
   map<string, vector<string>>
       subprocedures;  // subprocedure -> list of parameter identifiers
   void add_var_code(string code) { this->variable_code.push_back(code); }
@@ -35,9 +47,8 @@ struct compiler_state {
   bool trim_quote_lines = false;
   string current_subprocedure = "";
   int open_loops = 0;
-  stack<int>
-      block_stack;  // 0 sub-procedure, 1 if or else if, 2 while/for, 3 else
-  void open_subprocedure(string& subprocedure) {
+  stack<int> block_stack;  // 0 sub, 1 if, 2 loop, 3 else, 4 try, 5 handler
+  void open_subprocedure(const string& subprocedure) {
     current_subprocedure = subprocedure;
     block_stack.push(0);
   }
@@ -62,9 +73,32 @@ struct compiler_state {
     block_stack.pop();
   }
   bool closing_loop() { return !block_stack.empty() && block_stack.top() == 2; }
+  int try_body_depth = 0;
+  int error_handler_depth = 0;
+  void open_try() {
+    ++try_body_depth;
+    block_stack.push(4);
+  }
+  bool closing_try() { return !block_stack.empty() && block_stack.top() == 4; }
+  void open_error_handler() {
+    --try_body_depth;
+    ++error_handler_depth;
+    block_stack.top() = 5;
+  }
+  bool closing_error_handler() {
+    return !block_stack.empty() && block_stack.top() == 5;
+  }
+  void close_error_handler() {
+    --error_handler_depth;
+    block_stack.pop();
+  }
   // We keep track of declared variables used in range-based loops
   int range_vars = 0;
   string new_range_var() { return "RVAR_" + to_string(range_vars++); }
+  int collection_temp_vars = 0;
+  string new_collection_temp() {
+    return "COLLECTION_TMP_" + to_string(collection_temp_vars++);
+  }
   // We keep track of declared variables used to pass literal parameters
   int literal_paramter_vars = 0;
   string new_literal_parameter_var() {
@@ -125,6 +159,8 @@ struct compiler_state {
         c_type = "ldpl_list<" + c_type + ">";
       } else if (number_type == 4) {
         c_type = "ldpl_vector<" + c_type + ">";
+      } else if (structure_c_types.count(number_type) > 0) {
+        c_type = structure_c_types[number_type];
       }
     }
     return c_type;

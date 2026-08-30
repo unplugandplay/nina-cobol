@@ -1,0 +1,57 @@
+STRUCTURE Coordinates
+    latitude IS NUMBER
+    longitude IS NUMBER
+END STRUCTURE
+
+STRUCTURE Person
+    name IS TEXT
+    age IS NUMBER
+    home IS Coordinates
+    aliases IS LIST OF TEXT
+END STRUCTURE
+
+DATA:
+alice IS Person
+bob IS Person
+current IS Person
+people IS LIST OF Person
+legacy-people IS Person LIST
+people-copy IS LIST OF Person
+directory IS MAP OF Person
+position IS NUMBER
+
+PROCEDURE
+STORE "Alice" IN alice:name
+STORE 40 IN alice:age
+STORE 34.6 IN alice:home:latitude
+STORE 58.4 IN alice:home:longitude
+PUSH "Al" TO alice:aliases
+
+CALL HAVE-BIRTHDAY WITH alice
+COPY alice TO bob
+IF alice = bob THEN
+    DISPLAY "equal" LF
+END IF
+
+PUSH alice TO people
+PUSH alice TO legacy-people
+COPY people TO people-copy
+COPY bob TO directory:"bob"
+STORE 0 IN position
+DISPLAY people-copy:position:name " " directory:"bob":age LF
+
+FOR EACH current IN people DO
+    DISPLAY current:name LF
+REPEAT
+
+SUB-PROCEDURE HAVE-BIRTHDAY
+PARAMETERS:
+person IS Person
+LOCAL DATA:
+next-age IS NUMBER
+snapshot IS Person
+PROCEDURE
+COPY person TO snapshot
+IN next-age SOLVE person:age + 1
+STORE next-age IN person:age
+END SUB-PROCEDURE

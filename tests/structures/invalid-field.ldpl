@@ -1,0 +1,9 @@
+STRUCTURE Person
+    name IS TEXT
+END STRUCTURE
+
+DATA:
+person IS Person
+
+PROCEDURE
+STORE "Alice" IN person:missing

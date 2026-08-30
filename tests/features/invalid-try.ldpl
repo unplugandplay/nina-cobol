@@ -1,0 +1,5 @@
+PROCEDURE
+TRY
+    RAISE ERROR "missing end"
+ON ERROR
+    DISPLAY errortext LF

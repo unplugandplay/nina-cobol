@@ -79,6 +79,7 @@ LDPL requires only **C++11** to compile and run, and it works out of the box on 
 If you want to learn how to code in LDPL, the best way is to read the documentation and explore a few examples.
 
 The [LDPL Reference](REFERENCE.md) is included in this repository, where you can read and modify it directly.
+The focused guides include documentation for [structures](docs/structures.md), [constants](docs/constants.md), [safe error handling](docs/errors.md), [modules](docs/modules.md), collections, control flow, text processing, and C++ extensions.
 
 ![Learning Dinosaur](https://github.com/Lartu/ldpl/blob/master/images/reference-logo.png)
 

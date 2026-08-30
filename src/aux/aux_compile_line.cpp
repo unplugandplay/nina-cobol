@@ -7,13 +7,121 @@
 
 #include "../ldpl.h"
 
+static bool ldpl_container_type(const string &token, unsigned int &type)
+{
+    if (token == "LIST" || token == "LISTS")
+    {
+        type = 3;
+        return true;
+    }
+    if (token == "MAP" || token == "MAPS" || token == "VECTOR" || token == "VECTORS")
+    {
+        type = 4;
+        return true;
+    }
+    return false;
+}
+
+static bool ldpl_leaf_type(const string &token, compiler_state &state,
+                           unsigned int &type)
+{
+    if (token == "NUMBER" || token == "NUMBERS") type = 1;
+    else if (token == "TEXT" || token == "TEXTS") type = 2;
+    else if (state.structure_types.count(token) > 0) type = state.structure_types[token];
+    else if (state.current_module != "" &&
+             state.structure_types.count(state.current_module + ":" + token) > 0)
+        type = state.structure_types[state.current_module + ":" + token];
+    else return false;
+    return true;
+}
+
+// Parse both the recommended "LIST OF MAP OF T" syntax and the legacy
+// "T MAP LIST" syntax into LDPL's inner-to-outer type vector.
+static bool parse_declared_type(const vector<string> &tokens, size_t begin,
+                                size_t end, compiler_state &state,
+                                vector<unsigned int> &type)
+{
+    if (begin >= end) return false;
+    type.clear();
+    vector<unsigned int> containers;
+    unsigned int value_type = 0;
+    unsigned int container_type = 0;
+
+    if (begin + 1 < end && ldpl_container_type(tokens[begin], container_type) &&
+        tokens[begin + 1] == "OF")
+    {
+        size_t i = begin;
+        while (i + 1 < end && ldpl_container_type(tokens[i], container_type) &&
+               tokens[i + 1] == "OF")
+        {
+            containers.push_back(container_type);
+            i += 2;
+        }
+        if (i + 1 != end || !ldpl_leaf_type(tokens[i], state, value_type)) return false;
+        type.push_back(value_type);
+        for (vector<unsigned int>::reverse_iterator it = containers.rbegin();
+             it != containers.rend(); ++it)
+            type.push_back(*it);
+        return true;
+    }
+
+    if (!ldpl_leaf_type(tokens[begin], state, value_type)) return false;
+    type.push_back(value_type);
+    for (size_t i = begin + 1; i < end; ++i)
+    {
+        if (!ldpl_container_type(tokens[i], container_type)) return false;
+        type.push_back(container_type);
+    }
+    return true;
+}
+
+static string structure_default_value(const vector<unsigned int> &type)
+{
+    if (type == vector<unsigned int>{1}) return " = 0";
+    if (type == vector<unsigned int>{2}) return " = \"\"";
+    return "";
+}
+
 // Compiles line per line
 void compile_line(vector<string> &tokens, compiler_state &state)
 {
+    // Import a source file into an explicit namespace.
+    if (line_like("IMPORT $name FROM $string", tokens, state) ||
+        line_like("IMPORT $string AS $name", tokens, state))
+    {
+        if (state.section_state != 0 || state.current_structure != "")
+            badcode("you can only use IMPORT before DATA and PROCEDURE sections",
+                    state.where);
+        const bool name_first = tokens[1][0] != '"';
+        const string module = name_first ? tokens[1] : tokens[3];
+        string file_to_compile = name_first ? tokens[3] : tokens[1];
+        file_to_compile = file_to_compile.substr(1, file_to_compile.size() - 2);
+        if (state.imported_modules.count(module) > 0)
+            badcode("Duplicate import for module \"" + module + "\"", state.where);
+
+        string separators = "/";
+#if defined(_WIN32)
+        separators += "\\";
+#endif
+        size_t last_sep = state.where.current_file.find_last_of(separators);
+        code_location old_location = state.where;
+        if (last_sep != string::npos)
+            file_to_compile = state.where.current_file.substr(0, last_sep) + "/" +
+                              file_to_compile;
+        const string old_module = state.current_module;
+        state.imported_modules[module] = true;
+        state.current_module = module;
+        load_and_compile(file_to_compile, state);
+        state.current_module = old_module;
+        state.section_state = 0;
+        state.where = old_location;
+        return;
+    }
+
     // include
     if (line_like("INCLUDE $string", tokens, state))
     {
-        if (state.section_state != 0)
+        if (state.section_state != 0 || state.current_structure != "")
             badcode(
                 "you can only use the INCLUDE statement before the DATA and "
                 "PROCEDURE sections",
@@ -40,7 +148,7 @@ void compile_line(vector<string> &tokens, compiler_state &state)
     // extension (INCLUDE but for c++ extensions)
     if (line_like("EXTENSION $string", tokens, state))
     {
-        if (state.section_state != 0)
+        if (state.section_state != 0 || state.current_structure != "")
             badcode(
                 "you can only use the EXTENSION statement before the DATA and "
                 "PROCEDURE sections",
@@ -64,7 +172,7 @@ void compile_line(vector<string> &tokens, compiler_state &state)
     // extension flags (for the C++ compiler)
     if (line_like("FLAG $string", tokens, state))
     {
-        if (state.section_state != 0)
+        if (state.section_state != 0 || state.current_structure != "")
             badcode(
                 "you can only use the FLAG statement before the DATA and PROCEDURE "
                 "sections",
@@ -79,7 +187,7 @@ void compile_line(vector<string> &tokens, compiler_state &state)
     // os-specific extension flags
     if (line_like("FLAG $name $string", tokens, state))
     {
-        if (state.section_state != 0)
+        if (state.section_state != 0 || state.current_structure != "")
             badcode(
                 "you can only use the FLAG statement before the DATA and PROCEDURE "
                 "sections",
@@ -95,9 +203,80 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         return;
     }
 
+    // Structure declarations live before DATA and PROCEDURE sections.
+    if (line_like("STRUCTURE $name", tokens, state) ||
+        line_like("STRUCT $name", tokens, state))
+    {
+        if (state.section_state != 0)
+            badcode("STRUCTURE declaration after DATA or PROCEDURE section", state.where);
+        if (state.current_structure != "")
+            badcode("Nested STRUCTURE declarations are not supported", state.where);
+        const string source_name = tokens[1];
+        const string name = qualified_global_name(source_name, state);
+        if (source_name == "NUMBER" || source_name == "NUMBERS" ||
+            source_name == "TEXT" || source_name == "TEXTS" ||
+            source_name == "LIST" || source_name == "LISTS" ||
+            source_name == "MAP" || source_name == "MAPS" ||
+            source_name == "VECTOR" || source_name == "VECTORS")
+            badcode("Reserved data type name cannot be used for STRUCTURE \"" +
+                    name + "\"", state.where);
+        if (state.structure_types.count(name) > 0)
+            badcode("Duplicate declaration for STRUCTURE \"" + name + "\"", state.where);
+        unsigned int type = state.next_structure_type++;
+        const string c_type = "ldpl_structure_" + fix_identifier(name);
+        for (const pair<const unsigned int, string> &declared : state.structure_c_types)
+            if (declared.second == c_type)
+                badcode("STRUCTURE \"" + name +
+                        "\" has the same generated C++ name as another structure",
+                        state.where);
+        state.current_structure = name;
+        state.structure_types[name] = type;
+        state.structure_names[type] = name;
+        state.structure_c_types[type] = c_type;
+        state.structure_fields[name] = map<string, vector<unsigned int>>();
+        state.structure_field_order[name] = vector<string>();
+        return;
+    }
+    if (line_like("END STRUCTURE", tokens, state) ||
+        line_like("END STRUCT", tokens, state))
+    {
+        if (state.current_structure == "")
+            badcode("END STRUCTURE without STRUCTURE", state.where);
+        const string name = state.current_structure;
+        const unsigned int structure_type = state.structure_types[name];
+        string code = "struct " + state.structure_c_types[structure_type] + "{";
+        for (const string &field : state.structure_field_order[name])
+        {
+            vector<unsigned int> field_type = state.structure_fields[name][field];
+            code += state.get_c_type(field_type) + " " + fix_identifier(field, true) +
+                    structure_default_value(field_type) + ";";
+        }
+        code += "bool operator==(const " + state.structure_c_types[structure_type] +
+                "& other) const {return ";
+        if (state.structure_field_order[name].empty()) code += "true";
+        for (size_t i = 0; i < state.structure_field_order[name].size(); ++i)
+        {
+            const string field_name = state.structure_field_order[name][i];
+            const string field = fix_identifier(field_name, true);
+            const vector<unsigned int> field_type = state.structure_fields[name][field_name];
+            if (i > 0) code += " && ";
+            if (field_type == vector<unsigned int>{1})
+                code += "num_equal(" + field + ", other." + field + ")";
+            else
+                code += field + " == other." + field;
+        }
+        code += ";}bool operator!=(const " + state.structure_c_types[structure_type] +
+                "& other) const {return !(*this == other);}};";
+        state.add_var_code(code);
+        state.current_structure = "";
+        return;
+    }
+
     // Sections
     if (line_like("DATA:", tokens, state) || line_like("-- DATA --", tokens, state))
     {
+        if (state.current_structure != "")
+            badcode("DATA section inside STRUCTURE declaration", state.where);
         if (state.section_state == 1)
             badcode("Duplicate DATA section declaration", state.where);
         if (state.section_state >= 2)
@@ -107,6 +286,8 @@ void compile_line(vector<string> &tokens, compiler_state &state)
     }
     if (line_like("PROCEDURE", tokens, state) || line_like("-- PROCEDURE --", tokens, state))
     {
+        if (state.current_structure != "")
+            badcode("PROCEDURE section inside STRUCTURE declaration", state.where);
         if (state.section_state == 2)
             badcode("Duplicate PROCEDURE section declaration", state.where);
         if (state.current_subprocedure != "" && state.section_state >= 3)
@@ -143,142 +324,105 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         return;
     }
 
-    // Variable Declaration
-    if (line_like("$name IS $anything", tokens,
-                  state)) // If it's a variable declaration
+    // Immutable scalar constants.
+    if (tokens.size() >= 3 && tokens[1] == "IS" && tokens[2] == "CONSTANT")
     {
-        string extern_keyword = "";       // C++ extern keyword to prepend to the type
-                                          // (empty if not EXTERNAL)
-        vector<unsigned int> type_number; // All data types in LDPL have a list of
-                                          // numbers that represent its type
-        string assign_default;            // Default Value to asign to the variable
-        size_t i =
-            2;                  // i is used to check all the words after 'IS' and thus starts in 2.
-        bool valid_type = true; // Used to check if it's a valid tipe
-        if (tokens[i] == "EXTERNAL" &&
-            state.current_subprocedure ==
-                "")
-        { // EXTERNAL is only valid in DATA section (not in LOCAL DATA)
-            state.externals[tokens[0]] =
-                true;                   // Add it to the list of external variables
-            extern_keyword = "extern "; // Set the prepended keyword to 'extern'
-            ++i;                        // Check the next word.
-        }
-        if (tokens[i] == "NUMBER")
-        {                             // If it's a number...
-            type_number.push_back(1); // Then the type number is 1
-            if (extern_keyword == "")
-                assign_default = " = 0"; // if its not an external variable, set a
-                                         // default value for it.
-        }
-        else if (tokens[i] ==
-                 "TEXT")
-        {                             // If we are dealing with a text variable...
-            type_number.push_back(2); // The type number is 2
-            if (extern_keyword == "")
-                assign_default = " = \"\""; // And if it's not external, we set it to a
-                                            // default value.
-        }
-        else if ((tokens[i] == "MAP" || tokens[i] == "LIST") &&
-                 tokens.size() > i && tokens[i + 1] == "OF")
-        {
-            // nested 'of' syntax, ex: map of list of number
-            while (valid_type && i < tokens.size())
-            {
-                if (i % 2 == 1)
-                {
-                    if (tokens[i] != "OF")
-                        valid_type = false;
-                }
-                else if (i % 2 == 0)
-                {
-                    if (tokens[i] == "MAP" || (tokens[i] == "MAPS" && i > 0))
-                    {
-                        type_number.push_back(4);
-                    }
-                    else if (tokens[i] == "LIST" || (tokens[i] == "LISTS" && i > 0))
-                    {
-                        type_number.push_back(3);
-                    }
-                    else if (tokens.size() - 1 > i)
-                    {
-                        // text and number must be the final type listed
-                        valid_type = false;
-                    }
-                    else if (tokens[i] == "TEXT" || tokens[i] == "TEXTS")
-                    {
-                        type_number.push_back(2);
-                    }
-                    else if (tokens[i] == "NUMBER" || tokens[i] == "NUMBERS")
-                    {
-                        type_number.push_back(1);
-                    }
-                    else
-                    {
-                        valid_type = false;
-                    }
-                }
-                else
-                {
-                    valid_type = false;
-                }
-                ++i;
-            }
-            reverse(begin(type_number), end(type_number));
-        }
-        else
-        {
-            valid_type = false; // If its not a NUMBER, a TEXT or a collection of
-                                // these data types
-        } // then it's not a valid LDPL data type.
-        ++i; // Move to the next keyword.
-        while (valid_type &&
-               i < tokens.size())
-        { // If up to this point we got a valid data
-          // type, we check for containers.
-            assign_default =
-                ""; // Collections are not initialized with any default values.
-            if (tokens[i] == "MAP" ||
-                tokens[i] == "VECTOR")
-            {                             // If its a MAP (aka VECTOR)
-                type_number.push_back(4); // We add the MAP type (4) to its type list
-            }
-            else if (tokens[i] == "LIST")
-            {                             // If its a LIST
-                type_number.push_back(3); // We add the LIST type (3) to its type list
-            }
-            else
-            {                       // If the container is not a VECTOR nor a MAP
-                valid_type = false; // then it's not a valid data type.
-            }
-            ++i; // Move to the next keyword.
-        }
-        if (valid_type && i >= tokens.size() - 1)
-        {
-            if (state.section_state != 1 && state.section_state != 4)
-                badcode(
-                    "Variable declaration outside DATA, PARAMETERS or LOCAL DATA "
-                    "section",
+        if (state.current_structure != "" || state.current_subprocedure != "" ||
+            state.section_state != 1)
+            badcode("CONSTANT declarations are only valid in the DATA section",
                     state.where);
-            if (state.variables[state.current_subprocedure].count(tokens[0]) > 0)
-                badcode("Duplicate declaration for variable \"" + tokens[0] + "\"",
+        if (tokens.size() != 7 || tokens[4] != "WITH" || tokens[5] != "VALUE")
+            badcode("CONSTANT declaration must use IS CONSTANT <type> WITH VALUE <literal>",
+                    state.where);
+        vector<unsigned int> constant_type;
+        if (!parse_declared_type(tokens, 3, 4, state, constant_type) ||
+            (constant_type != vector<unsigned int>{1} &&
+             constant_type != vector<unsigned int>{2}))
+            badcode("CONSTANT type must be NUMBER or TEXT", state.where);
+        string value = tokens[6];
+        if ((constant_type == vector<unsigned int>{1} && !is_number(value)) ||
+            (constant_type == vector<unsigned int>{2} && !is_string(value)))
+            badcode("CONSTANT value does not match its declared type", state.where);
+
+        const string name = qualified_global_name(tokens[0], state);
+        if (state.variables[""].count(name) > 0)
+            badcode("Duplicate declaration for variable \"" + name + "\"", state.where);
+        state.variables[""][name] = constant_type;
+        state.constants[name] = true;
+        state.constant_values[name] = value;
+        string c_type = state.get_c_type(constant_type);
+        state.add_var_code("const " + c_type + " " + fix_identifier(name, true, state) +
+                           " = " + value + ";");
+        return;
+    }
+
+    // Structure field and variable declarations.
+    if (line_like("$name IS $anything", tokens, state))
+    {
+        size_t type_begin = 2;
+        string extern_keyword;
+        if (type_begin < tokens.size() && tokens[type_begin] == "EXTERNAL")
+        {
+            if (state.current_structure != "" || state.current_subprocedure != "" ||
+                state.section_state != 1)
+                badcode("EXTERNAL is only valid for variables in the DATA section",
                         state.where);
-            state.variables[state.current_subprocedure][tokens[0]] = type_number;
-            if (state.section_state == 1)
-            { // DATA or LOCAL DATA
-                string identifier = fix_identifier(tokens[0], true, state);
-                string type = state.get_c_type(type_number);
-                string code =
-                    extern_keyword + type + " " + identifier + assign_default + ";";
-                if (state.current_subprocedure == "") // DATA
-                    state.add_var_code(code);
-                else
-                    state.add_code(code, state.where); // LOCAL DATA
-            }
-            else // PARAMETERS
-                state.subprocedures[state.current_subprocedure].emplace_back(tokens[0]);
+            extern_keyword = "extern ";
+            ++type_begin;
+        }
+
+        vector<unsigned int> declared_type;
+        if (!parse_declared_type(tokens, type_begin, tokens.size(), state, declared_type))
+            badcode("Unknown or malformed data type in declaration of \"" + tokens[0] +
+                    "\"", state.where);
+
+        if (state.current_structure != "")
+        {
+            const string &structure = state.current_structure;
+            if (find(declared_type.begin(), declared_type.end(),
+                     state.structure_types[structure]) != declared_type.end())
+                badcode("Structure \"" + structure + "\" cannot contain itself",
+                        state.where);
+            if (state.structure_fields[structure].count(tokens[0]) > 0)
+                badcode("Duplicate field \"" + tokens[0] + "\" in STRUCTURE \"" +
+                        structure + "\"", state.where);
+            const string c_field = fix_identifier(tokens[0], true);
+            for (const string &field : state.structure_field_order[structure])
+                if (fix_identifier(field, true) == c_field)
+                    badcode("Field \"" + tokens[0] +
+                            "\" has the same generated C++ name as field \"" +
+                            field + "\"", state.where);
+            state.structure_fields[structure][tokens[0]] = declared_type;
+            state.structure_field_order[structure].push_back(tokens[0]);
             return;
         }
+
+        if (state.section_state != 1 && state.section_state != 4)
+            badcode("Variable declaration outside DATA, PARAMETERS or LOCAL DATA section",
+                    state.where);
+        const string declared_name = state.current_subprocedure == ""
+                                         ? qualified_global_name(tokens[0], state)
+                                         : tokens[0];
+        if (state.variables[state.current_subprocedure].count(declared_name) > 0)
+            badcode("Duplicate declaration for variable \"" + declared_name + "\"",
+                    state.where);
+        state.variables[state.current_subprocedure][declared_name] = declared_type;
+        if (!extern_keyword.empty()) state.externals[declared_name] = true;
+
+        if (state.section_state == 1)
+        {
+            string identifier = fix_identifier(declared_name, true, state);
+            string c_type = state.get_c_type(declared_type);
+            string assign_default = extern_keyword.empty()
+                                        ? structure_default_value(declared_type)
+                                        : "";
+            string code = extern_keyword + c_type + " " + identifier + assign_default + ";";
+            if (state.current_subprocedure == "") state.add_var_code(code);
+            else state.add_code(code, state.where);
+        }
+        else
+            state.subprocedures[state.current_subprocedure].emplace_back(declared_name);
+        return;
     }
 
     // SUB-PROCEDURE Declaration
@@ -288,8 +432,9 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         if (!in_procedure_section(state))
             badcode("SUB-PROCEDURE declaration outside PROCEDURE section",
                     state.where);
+        const string subprocedure = resolved_subprocedure_name(tokens[1], state);
         if (is_subprocedure(tokens[1], state))
-            badcode("Duplicate declaration for SUB-PROCEDURE \"" + tokens[1] + "\"",
+            badcode("Duplicate declaration for SUB-PROCEDURE \"" + subprocedure + "\"",
                     state.where);
         if (state.closing_subprocedure())
             badcode("SUB-PROCEDURE declaration inside SUB-PROCEDURE", state.where);
@@ -297,9 +442,11 @@ void compile_line(vector<string> &tokens, compiler_state &state)
             badcode("SUB-PROCEDURE declaration inside IF", state.where);
         else if (state.closing_loop())
             badcode("SUB-PROCEDURE declaration inside WHILE or FOR", state.where);
+        else if (state.closing_try() || state.closing_error_handler())
+            badcode("SUB-PROCEDURE declaration inside TRY", state.where);
         state.section_state = 3;
-        state.open_subprocedure(tokens[1]);
-        state.subprocedures.emplace(tokens[1], vector<string>());
+        state.open_subprocedure(subprocedure);
+        state.subprocedures.emplace(subprocedure, vector<string>());
         return;
     }
     if (line_like("EXTERNAL SUB-PROCEDURE $external", tokens, state) ||
@@ -360,6 +507,54 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         else
             lhand = get_c_string(state, tokens[3]);
         state.add_code(get_c_variable(state, tokens[1]) + " = " + lhand + ";", state.where);
+        return;
+    }
+    if (line_like("TRY", tokens, state))
+    {
+        if (!in_procedure_section(state))
+            badcode("TRY outside PROCEDURE section", state.where);
+        state.open_try();
+        state.add_code("VAR_ERRORCODE = 0; VAR_ERRORTEXT = \"\"; try {", state.where);
+        return;
+    }
+    if (line_like("ON ERROR", tokens, state))
+    {
+        if (!state.closing_try())
+            badcode("ON ERROR without a matching TRY, or with an open inner block",
+                    state.where);
+        state.open_error_handler();
+        state.add_code("} catch (const ldpl_error_signal&) {", state.where);
+        return;
+    }
+    if (line_like("END TRY", tokens, state))
+    {
+        if (!state.closing_error_handler())
+            badcode("END TRY without a matching ON ERROR, or with an open inner block",
+                    state.where);
+        state.close_error_handler();
+        state.add_code("} VAR_ERRORCODE = 0; VAR_ERRORTEXT = \"\";", state.where);
+        return;
+    }
+    if (line_like("RAISE ERROR $str-expr", tokens, state))
+    {
+        if (!in_procedure_section(state))
+            badcode("RAISE ERROR outside PROCEDURE section", state.where);
+        if (state.try_body_depth == 0 && state.error_handler_depth == 0)
+            badcode("RAISE ERROR must be used inside TRY or ON ERROR", state.where);
+        state.add_code("VAR_ERRORCODE = 1; VAR_ERRORTEXT = " +
+                           get_c_expression(state, tokens[2]) +
+                           "; throw ldpl_error_signal();",
+                       state.where);
+        return;
+    }
+    if (line_like("RAISE ERROR", tokens, state))
+    {
+        if (!in_procedure_section(state))
+            badcode("RAISE ERROR outside PROCEDURE section", state.where);
+        if (state.error_handler_depth == 0)
+            badcode("RAISE ERROR without a message is only valid in ON ERROR",
+                    state.where);
+        state.add_code("throw;", state.where);
         return;
     }
     if (line_like("IF $condition THEN", tokens, state))
@@ -583,7 +778,7 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         size_t i = 1;
         if (tokens[i] == "SUB-PROCEDURE")
             i++;
-        string subprocedure = tokens[i];
+        string subprocedure = resolved_subprocedure_name(tokens[i], state);
         // Valid options: No WITH or WITH with at least one paramter
         if (i == tokens.size() - 1 ||
             (i < tokens.size() - 2 && tokens[i + 1] == "WITH"))
@@ -632,7 +827,7 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         size_t i = 2;
         if (tokens[i] == "SUB-PROCEDURE")
             i++;
-        string subprocedure = tokens[i];
+        string subprocedure = resolved_subprocedure_name(tokens[i], state);
         // Valid options: No WITH or WITH with at least one paramter
         if (i == tokens.size() - 1)
         {
@@ -1015,8 +1210,8 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         string code = "";
         for (unsigned int i = 3; i < tokens.size(); ++i)
         {
-            if (is_num_var(tokens[i], state))
-                code += " " + get_c_variable(state, tokens[i]);
+            if (is_num_expr(tokens[i], state))
+                code += " " + get_c_number(state, tokens[i]);
             else if (is_txt_expr(tokens[i], state))
                 code += " " + get_c_number(state, tokens[i]);
             else
@@ -1242,16 +1437,9 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         // C++ Code
         for (unsigned int i = 1; i < tokens.size(); ++i)
         {
-            if (is_scalar_variable(tokens[i], state))
-            {
-                state.add_code(
-                    "cout << " + get_c_variable(state, tokens[i]) + " << flush;",
-                    state.where);
-            }
-            else
-            {
-                state.add_code("cout << " + tokens[i] + " << flush;", state.where);
-            }
+            state.add_code("cout << " + get_c_expression(state, tokens[i]) +
+                               " << flush;",
+                           state.where);
         }
         return;
     }
@@ -1262,16 +1450,9 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         // C++ Code
         for (unsigned int i = 1; i < tokens.size(); ++i)
         {
-            if (is_scalar_variable(tokens[i], state))
-            {
-                state.add_code(
-                    "cout << " + get_c_variable(state, tokens[i]) + " << flush;",
-                    state.where);
-            }
-            else
-            {
-                state.add_code("cout << " + tokens[i] + " << flush;", state.where);
-            }
+            state.add_code("cout << " + get_c_expression(state, tokens[i]) +
+                               " << flush;",
+                           state.where);
         }
         state.add_code("cout << endl;", state.where);
         return;
@@ -1558,6 +1739,102 @@ void compile_line(vector<string> &tokens, compiler_state &state)
                        state.where);
         return;
     }
+    bool find_scalar = line_like("FIND $expression IN $list INTO $num-var", tokens, state);
+    bool find_aggregate = !find_scalar &&
+                          line_like("FIND $anyVar IN $list INTO $num-var", tokens, state);
+    if (find_scalar || find_aggregate)
+    {
+        if (!in_procedure_section(state))
+            badcode("FIND statement outside PROCEDURE section", state.where);
+        vector<unsigned int> value_type;
+        if (is_number(tokens[1])) value_type = {1};
+        else if (is_string(tokens[1])) value_type = {2};
+        else value_type = variable_type(tokens[1], state);
+        vector<unsigned int> element_type = variable_type(tokens[3], state);
+        element_type.pop_back();
+        if (value_type != element_type)
+            badcode("FIND value type doesn't match LIST element type", state.where);
+        string list = get_c_variable(state, tokens[3]) + ".inner_collection";
+        string iterator = state.new_collection_temp();
+        string value = get_c_expression(state, tokens[1]);
+        if (value_type == vector<unsigned int>{1}) value = "(ldpl_number)" + value;
+        else if (value_type == vector<unsigned int>{2}) value = "(graphemedText)" + value;
+        state.add_code("auto " + iterator + " = std::find(" + list + ".begin(), " +
+                           list + ".end(), " + value + ");",
+                       state.where);
+        state.add_code(get_c_variable(state, tokens[5]) + " = " + iterator + " == " +
+                           list + ".end() ? -1 : std::distance(" + list +
+                           ".begin(), " + iterator + ");",
+                       state.where);
+        return;
+    }
+    bool remove_scalar = line_like("REMOVE $expression FROM $list", tokens, state);
+    bool remove_aggregate = !remove_scalar &&
+                            line_like("REMOVE $anyVar FROM $list", tokens, state);
+    if (remove_scalar || remove_aggregate)
+    {
+        if (!in_procedure_section(state))
+            badcode("REMOVE statement outside PROCEDURE section", state.where);
+        vector<unsigned int> value_type;
+        if (is_number(tokens[1])) value_type = {1};
+        else if (is_string(tokens[1])) value_type = {2};
+        else value_type = variable_type(tokens[1], state);
+        vector<unsigned int> element_type = variable_type(tokens[3], state);
+        element_type.pop_back();
+        if (value_type != element_type)
+            badcode("REMOVE value type doesn't match LIST element type", state.where);
+        string list = get_c_variable(state, tokens[3]) + ".inner_collection";
+        string iterator = state.new_collection_temp();
+        string value = get_c_expression(state, tokens[1]);
+        if (value_type == vector<unsigned int>{1}) value = "(ldpl_number)" + value;
+        else if (value_type == vector<unsigned int>{2}) value = "(graphemedText)" + value;
+        state.add_code("auto " + iterator + " = std::find(" + list + ".begin(), " +
+                           list + ".end(), " + value + ");",
+                       state.where);
+        state.add_code("if (" + iterator + " != " + list + ".end()) " + list +
+                           ".erase(" + iterator + ");",
+                       state.where);
+        return;
+    }
+    if (line_like("SORT $list", tokens, state))
+    {
+        if (!in_procedure_section(state))
+            badcode("SORT statement outside PROCEDURE section", state.where);
+        vector<unsigned int> element_type = variable_type(tokens[1], state);
+        element_type.pop_back();
+        if (element_type != vector<unsigned int>{1} &&
+            element_type != vector<unsigned int>{2})
+            badcode("SORT supports only LIST OF NUMBER and LIST OF TEXT", state.where);
+        string list = get_c_variable(state, tokens[1]) + ".inner_collection";
+        state.add_code("std::sort(" + list + ".begin(), " + list + ".end());",
+                       state.where);
+        return;
+    }
+    if (line_like("REVERSE $list", tokens, state))
+    {
+        if (!in_procedure_section(state))
+            badcode("REVERSE statement outside PROCEDURE section", state.where);
+        string list = get_c_variable(state, tokens[1]) + ".inner_collection";
+        state.add_code("std::reverse(" + list + ".begin(), " + list + ".end());",
+                       state.where);
+        return;
+    }
+    if (line_like("COPY $anyVar TO $anyVar", tokens, state))
+    {
+        vector<unsigned int> source_type = variable_type(tokens[1], state);
+        vector<unsigned int> destination_type = variable_type(tokens[3], state);
+        bool aggregate = is_structure_type(source_type, state) ||
+                         (!source_type.empty() &&
+                          (source_type.back() == 3 || source_type.back() == 4));
+        if (!aggregate || source_type != destination_type)
+            badcode("COPY requires matching structure or collection types", state.where);
+        if (!in_procedure_section(state))
+            badcode("COPY statement outside PROCEDURE section", state.where);
+        state.add_code(get_c_variable(state, tokens[3]) + " = " +
+                           get_c_variable(state, tokens[1]) + ";",
+                       state.where);
+        return;
+    }
     if (line_like("CLEAR $collection", tokens, state))
     {
         if (!in_procedure_section(state))
@@ -1642,6 +1919,21 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         state.add_code(
             get_c_variable(state, tokens[3]) + ".inner_collection.emplace_back();",
             state.where);
+        return;
+    }
+    if (line_like("PUSH $anyVar TO $list", tokens, state))
+    {
+        vector<unsigned int> list_type = variable_type(tokens[3], state);
+        vector<unsigned int> element_type = list_type;
+        element_type.pop_back();
+        if (variable_type(tokens[1], state) != element_type)
+            badcode("List - Value type mismatch", state.where);
+        if (!in_procedure_section(state))
+            badcode("PUSH statement outside PROCEDURE section", state.where);
+        state.add_code(get_c_variable(state, tokens[3]) +
+                           ".inner_collection.push_back(" +
+                           get_c_variable(state, tokens[1]) + ");",
+                       state.where);
         return;
     }
     if (line_like("PUSH $expression TO $scalar-list", tokens, state))
@@ -1990,9 +2282,12 @@ void compile_line(vector<string> &tokens, compiler_state &state)
             badcode("CREATE STATEMENT statement inside IF", state.where);
         else if (state.closing_loop())
             badcode("CREATE STATEMENT statement inside WHILE or FOR", state.where);
+        else if (state.closing_try() || state.closing_error_handler())
+            badcode("CREATE STATEMENT statement inside TRY", state.where);
+        string custom_subprocedure = resolved_subprocedure_name(tokens[4], state);
         string model_line = tokens[2].substr(1, tokens[2].size() - 2);
         vector<string> model_tokens;
-        vector<string> parameters = state.subprocedures[tokens[4]];
+        vector<string> parameters = state.subprocedures[custom_subprocedure];
         trim(model_line);
         tokenize(model_line, model_tokens, state.where, true, ' ');
         size_t param_count = 0;
@@ -2007,7 +2302,7 @@ void compile_line(vector<string> &tokens, compiler_state &state)
                 if (param_count > parameters.size())
                     break;
                 vector<unsigned int> type =
-                    state.variables[tokens[4]][parameters[param_count - 1]];
+                    state.variables[custom_subprocedure][parameters[param_count - 1]];
                 if (type == vector<unsigned int>{1})
                     model_line += "$num-expr ";
                 else if (type == vector<unsigned int>{2})
@@ -2017,7 +2312,7 @@ void compile_line(vector<string> &tokens, compiler_state &state)
                     model_line += "$var-type-";
                     for (size_t i = 0; i < type.size(); ++i)
                     {
-                        model_line += to_string(type[i]);
+                        model_line += to_string(type[i]) + ",";
                     }
                     model_line += " ";
                 }
@@ -2038,7 +2333,7 @@ void compile_line(vector<string> &tokens, compiler_state &state)
                     state.where);
         if (keyword_count == 0)
             badcode("CREATE STATEMENT without keywords", state.where);
-        state.custom_statements.emplace_back(model_line, tokens[4]);
+        state.custom_statements.emplace_back(model_line, custom_subprocedure);
         return;
     }
     for (pair<string, string> &statement : state.custom_statements)
@@ -2060,6 +2355,38 @@ void compile_line(vector<string> &tokens, compiler_state &state)
             return;
         }
     }
+
+    // Surface type-directed access errors instead of reducing them to the
+    // otherwise-correct but unhelpful "Malformed statement" diagnostic.
+    for (string token : tokens)
+    {
+        if (token.find(':') == string::npos || is_string(token)) continue;
+        vector<string> access_parts;
+        tokenize(token, access_parts, state.where, true, ':');
+        if (access_parts.empty()) continue;
+        bool known_access =
+            state.variables[state.current_subprocedure].count(access_parts[0]) > 0 ||
+            state.variables[""].count(access_parts[0]) > 0 ||
+            (state.current_module != "" &&
+             state.variables[""].count(state.current_module + ":" +
+                                         access_parts[0]) > 0) ||
+            (access_parts.size() > 1 &&
+             state.imported_modules.count(access_parts[0]) > 0 &&
+             state.variables[""].count(access_parts[0] + ":" +
+                                         access_parts[1]) > 0);
+        if (!known_access)
+            continue;
+        vector<unsigned int> access_type;
+        string c_expression;
+        string diagnostic;
+        if (!resolve_variable_access(token, state, access_type, c_expression,
+                                     &diagnostic))
+            badcode(diagnostic, state.where);
+    }
+
+    for (string token : tokens)
+        if (is_constant(token, state))
+            badcode("Cannot modify CONSTANT \"" + token + "\"", state.where);
 
     badcode("Malformed statement", state.where);
 }

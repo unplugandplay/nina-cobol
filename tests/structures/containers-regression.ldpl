@@ -1,0 +1,9 @@
+DATA:
+matrix IS LIST OF LIST OF NUMBER
+indexes IS LIST OF NUMBER
+
+PROCEDURE
+PUSH LIST TO matrix
+PUSH 12 TO matrix:0
+PUSH 0 TO indexes
+DISPLAY matrix:indexes:0:0 LF

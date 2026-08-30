@@ -11,29 +11,12 @@
 // bar) returns the C++ representation of said variable in order to be accessed.
 string get_c_variable(compiler_state &state, string &variable)
 {
-    // We want to get two things in order to create the correct C++ representation
-    // of a 'full variable': the variable name and all the indexess we are trying
-    // to access that correspond to this particular variable (because we could
-    // have foo number list list and bar number list and try to access
-    // foo:bar:0:1. In this case, we would be interested in getting 'foo', 'bar:0'
-    // and '1'.
-    string var_name;
-    vector<string> indexes;
-    // We use the split_vector function to get these values into our variables.
-    split_vector(variable, var_name, indexes, state);
-    // We 'fix' the variable name, turning all characters not accepted by C++ into
-    // LDPL codes that C++ does accept.
-    var_name = fix_identifier(var_name, true, state);
-    // If split_vector didn't return any indexes, then we are dealing with a
-    // scalar variable. We just return the C++ variable name and we are done.
-    if (indexes.empty())
-        return var_name;
-    // If our indexes vector is not empty, however, we recreate the correct C++
-    // container access, with one dimension for each value in our indexes vector.
-    for (size_t i = 0; i < indexes.size(); ++i)
-        var_name += "[(graphemedText)" + get_c_expression(state, indexes[i]) + "]";
-    // Once we are done, we return the variable name.
-    return var_name;
+    vector<unsigned int> type;
+    string c_expression;
+    string diagnostic;
+    if (!resolve_variable_access(variable, state, type, c_expression, &diagnostic))
+        error(diagnostic + ".");
+    return c_expression;
 }
 
 string get_c_expression(compiler_state &state, string &expression)
@@ -226,6 +209,16 @@ string get_c_condition(compiler_state &state, vector<string> tokens,
                      variable_type(first_value, state) ==
                          variable_type(second_value, state))
                 type = "MAP MAP";
+            else if (variable_type(first_value, state) ==
+                         variable_type(second_value, state) &&
+                     is_structure(first_value, state))
+                type = "STRUCTURE";
+            else if (variable_type(first_value, state) ==
+                         variable_type(second_value, state) &&
+                     variable_type(first_value, state).size() > 1 &&
+                     (variable_type(first_value, state).back() == 3 ||
+                      variable_type(first_value, state).back() == 4))
+                type = "COLLECTION";
             else
                 return "[ERROR]";
 
@@ -264,6 +257,15 @@ string get_c_condition(compiler_state &state, vector<string> tokens,
                     condition = "str_cmp(" + first_value + ", " + second_value + ") >= 0";
                 else if (rel_op == "LESS THAN OR EQUAL TO")
                     condition = "str_cmp(" + first_value + ", " + second_value + ") <= 0";
+                else
+                    return "[ERROR]";
+            }
+            else if (type == "STRUCTURE")
+            {
+                if (rel_op == "EQUAL TO")
+                    condition = first_value + " == " + second_value;
+                else if (rel_op == "NOT EQUAL TO")
+                    condition = first_value + " != " + second_value;
                 else
                     return "[ERROR]";
             }

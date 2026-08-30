@@ -1,0 +1,29 @@
+STRUCTURE Address
+    city IS TEXT
+    zip IS NUMBER
+END STRUCTURE
+
+STRUCTURE Person
+    name IS TEXT
+    age IS NUMBER
+    address IS Address
+    tags IS LIST OF TEXT
+END STRUCTURE
+
+DATA:
+alice IS Person
+copy IS Person
+people IS LIST OF Person
+directory IS MAP OF Person
+index IS NUMBER
+
+PROCEDURE
+STORE "Alice" IN alice:name
+STORE 42 IN alice:age
+STORE "Rosario" IN alice:address:city
+PUSH "programmer" TO alice:tags
+COPY alice TO copy
+PUSH alice TO people
+COPY alice TO directory:"alice"
+STORE 0 IN index
+DISPLAY people:index:name " lives in " directory:"alice":address:city LF

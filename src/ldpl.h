@@ -52,7 +52,9 @@ void warning(const string &msg);
 void error(const string &msg);
 void compile(vector<string> &lines, compiler_state &state);
 void tokenize(string &line, vector<string> &tokens, code_location &where, bool uppercase, char splitChar);
-void split_vector(string &token, string &var_name, vector<string> &indexes, compiler_state &state);
+bool resolve_variable_access(string &token, compiler_state &state,
+                             vector<unsigned int> &type, string &c_expression,
+                             string *diagnostic = nullptr);
 void compile_line(vector<string> &tokens, compiler_state &state);
 bool line_like(string model_line, vector<string> &tokens, compiler_state &state); // Important to pass tokens by copy
 bool is_number(string &number);
@@ -66,6 +68,12 @@ bool is_scalar_variable(string &token, compiler_state &state);
 bool is_num_expr(string &token, compiler_state &state);
 bool is_txt_expr(string &token, compiler_state &state);
 bool is_expression(string &token, compiler_state &state);
+bool is_constant(string &token, compiler_state &state);
+string qualified_global_name(string name, compiler_state &state);
+string resolved_subprocedure_name(string name, compiler_state &state);
+bool is_structure(string &token, compiler_state &state);
+bool is_structure_type(const vector<unsigned int> &type,
+                       compiler_state &state);
 bool is_num_map(string &token, compiler_state &state);
 bool is_txt_map(string &token, compiler_state &state);
 bool is_num_list(string &token, compiler_state &state);
