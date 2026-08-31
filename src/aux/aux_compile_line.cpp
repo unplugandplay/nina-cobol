@@ -82,6 +82,56 @@ static string structure_default_value(const vector<unsigned int> &type)
     return "";
 }
 
+static string compile_condition_tokens(const vector<string> &tokens, size_t begin,
+                                       size_t end, compiler_state &state)
+{
+    bool legacy_words = false;
+    for (size_t i = begin; i < end; ++i)
+        if (tokens[i] == "IS" || tokens[i] == "IN" || tokens[i] == "EQUAL" ||
+            tokens[i] == "GREATER" || tokens[i] == "LESS")
+            legacy_words = true;
+    if (legacy_words)
+    {
+        string condition = get_c_condition(
+            state, vector<string>(tokens.begin() + begin, tokens.begin() + end));
+        if (condition == "[ERROR]") badcode("Invalid condition", state.where);
+        return condition;
+    }
+    composable_expression condition =
+        compile_expression(join_tokens(tokens, begin, end), state);
+    if (!condition.boolean_value)
+        badcode("IF and WHILE expressions must produce a condition", state.where);
+    return condition.code;
+}
+
+static bool has_expression_punctuation(const string &source)
+{
+    bool in_string = false;
+    bool escaped = false;
+    for (char character : source)
+    {
+        if (escaped)
+        {
+            escaped = false;
+            continue;
+        }
+        if (character == '\\' && in_string)
+        {
+            escaped = true;
+            continue;
+        }
+        if (character == '"')
+        {
+            in_string = !in_string;
+            continue;
+        }
+        if (!in_string &&
+            (character == '(' || character == ')' || character == ','))
+            return true;
+    }
+    return false;
+}
+
 // Compiles line per line
 void compile_line(vector<string> &tokens, compiler_state &state)
 {
@@ -370,6 +420,9 @@ void compile_line(vector<string> &tokens, compiler_state &state)
             extern_keyword = "extern ";
             ++type_begin;
         }
+        if (state.section_state == 4 && type_begin < tokens.size() &&
+            tokens[type_begin] == "REFERENCE")
+            ++type_begin;
 
         vector<unsigned int> declared_type;
         if (!parse_declared_type(tokens, type_begin, tokens.size(), state, declared_type))
@@ -426,14 +479,18 @@ void compile_line(vector<string> &tokens, compiler_state &state)
     }
 
     // SUB-PROCEDURE Declaration
-    if (line_like("SUB-PROCEDURE $name", tokens, state) ||
-        line_like("SUB $name", tokens, state))
+    if (tokens.size() >= 2 &&
+        (tokens[0] == "SUB-PROCEDURE" || tokens[0] == "SUB") &&
+        (tokens.size() == 2 || (tokens.size() > 3 && tokens[2] == "RETURNS")))
     {
+        vector<string> name_tokens(tokens.begin(), tokens.begin() + 2);
+        if (!line_like(tokens[0] + " $name", name_tokens, state))
+            badcode("Invalid SUB-PROCEDURE name", state.where);
         if (!in_procedure_section(state))
             badcode("SUB-PROCEDURE declaration outside PROCEDURE section",
                     state.where);
         const string subprocedure = resolved_subprocedure_name(tokens[1], state);
-        if (is_subprocedure(tokens[1], state))
+        if (state.subprocedures.count(subprocedure) > 0)
             badcode("Duplicate declaration for SUB-PROCEDURE \"" + subprocedure + "\"",
                     state.where);
         if (state.closing_subprocedure())
@@ -444,6 +501,15 @@ void compile_line(vector<string> &tokens, compiler_state &state)
             badcode("SUB-PROCEDURE declaration inside WHILE or FOR", state.where);
         else if (state.closing_try() || state.closing_error_handler())
             badcode("SUB-PROCEDURE declaration inside TRY", state.where);
+        vector<unsigned int> declared_return{0};
+        if (tokens.size() > 2 &&
+            !parse_declared_type(tokens, 3, tokens.size(), state, declared_return))
+            badcode("Unknown or malformed SUB-PROCEDURE return type", state.where);
+        if (state.subprocedure_returns.count(subprocedure) > 0 &&
+            state.subprocedure_returns[subprocedure] != declared_return)
+            badcode("SUB-PROCEDURE return type doesn't match its predeclared signature",
+                    state.where);
+        state.subprocedure_returns[subprocedure] = declared_return;
         state.section_state = 3;
         state.open_subprocedure(subprocedure);
         state.subprocedures.emplace(subprocedure, vector<string>());
@@ -476,13 +542,44 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         if (!state.closing_subprocedure())
             badcode("END SUB-PROCEDURE without SUB-PROCEDURE", state.where);
         // C++ Code
-        state.add_code("return;}", state.where);
+        vector<unsigned int> return_type = state.subprocedure_returns.count(
+                                               state.current_subprocedure)
+                                               ? state.subprocedure_returns[
+                                                     state.current_subprocedure]
+                                               : vector<unsigned int>{0};
+        if (return_type != vector<unsigned int>{0} &&
+            !state.current_subprocedure_has_return)
+            badcode("Returning SUB-PROCEDURE must contain RETURN with a value",
+                    state.where);
+        if (return_type == vector<unsigned int>{0})
+            state.add_code("return;}", state.where);
+        else
+            state.add_code(
+                "VAR_ERRORCODE = 1; VAR_ERRORTEXT = \"Returning SUB-PROCEDURE " +
+                    state.current_subprocedure +
+                    " completed without RETURN\"; throw ldpl_error_signal();}",
+                state.where);
         // Cierro la subrutina
         state.close_subprocedure();
         return;
     }
 
     // Control Flow Statements
+    if (tokens.size() >= 4 && tokens[0] == "SET" && tokens[2] == "TO")
+    {
+        if (!in_procedure_section(state))
+            badcode("SET statement outside PROCEDURE section", state.where);
+        if (!variable_exists(tokens[1], state) || is_constant(tokens[1], state))
+            badcode("SET destination must be a mutable variable", state.where);
+        composable_expression value =
+            compile_expression(join_tokens(tokens, 3, tokens.size()), state);
+        vector<unsigned int> destination_type = variable_type(tokens[1], state);
+        if (value.boolean_value || value.type != destination_type)
+            badcode("SET expression type doesn't match its destination", state.where);
+        state.add_code(get_c_variable(state, tokens[1]) + " = " + value.code + ";",
+                       state.where);
+        return;
+    }
     if (line_like("STORE $expression IN $var", tokens, state))
     {
         if (!in_procedure_section(state))
@@ -559,32 +656,24 @@ void compile_line(vector<string> &tokens, compiler_state &state)
     }
     if (line_like("IF $condition THEN", tokens, state))
     {
-        string condition = get_c_condition(
-            state, vector<string>(tokens.begin() + 1, tokens.end() - 1));
-        if (condition != "[ERROR]")
-        {
-            if (!in_procedure_section(state))
-                badcode("IF outside PROCEDURE section", state.where);
-            // C++ Code
-            state.open_if();
-            state.add_code("if (" + condition + "){", state.where);
-            return;
-        }
+        string condition = compile_condition_tokens(tokens, 1, tokens.size() - 1,
+                                                    state);
+        if (!in_procedure_section(state))
+            badcode("IF outside PROCEDURE section", state.where);
+        state.open_if();
+        state.add_code("if (" + condition + "){", state.where);
+        return;
     }
     if (line_like("ELSE IF $condition THEN", tokens, state))
     {
-        string condition = get_c_condition(
-            state, vector<string>(tokens.begin() + 2, tokens.end() - 1));
-        if (condition != "[ERROR]")
-        {
-            if (!in_procedure_section(state))
-                badcode("ELSE IF outside PROCEDURE section", state.where);
-            if (!state.closing_if())
-                badcode("ELSE IF without IF", state.where);
-            // C++ Code
-            state.add_code("} else if (" + condition + "){", state.where);
-            return;
-        }
+        string condition = compile_condition_tokens(tokens, 2, tokens.size() - 1,
+                                                    state);
+        if (!in_procedure_section(state))
+            badcode("ELSE IF outside PROCEDURE section", state.where);
+        if (!state.closing_if())
+            badcode("ELSE IF without IF", state.where);
+        state.add_code("} else if (" + condition + "){", state.where);
+        return;
     }
     if (line_like("ELSE", tokens, state))
     {
@@ -610,17 +699,13 @@ void compile_line(vector<string> &tokens, compiler_state &state)
     }
     if (line_like("WHILE $condition DO", tokens, state))
     {
-        string condition = get_c_condition(
-            state, vector<string>(tokens.begin() + 1, tokens.end() - 1));
-        if (condition != "[ERROR]")
-        {
-            if (!in_procedure_section(state))
-                badcode("WHILE outside PROCEDURE section", state.where);
-            // C++ Code
-            state.open_loop();
-            state.add_code("while (" + condition + "){", state.where);
-            return;
-        }
+        string condition = compile_condition_tokens(tokens, 1, tokens.size() - 1,
+                                                    state);
+        if (!in_procedure_section(state))
+            badcode("WHILE outside PROCEDURE section", state.where);
+        state.open_loop();
+        state.add_code("while (" + condition + "){", state.where);
+        return;
     }
     if (line_like("FOREVER DO", tokens, state))
     {
@@ -779,27 +864,25 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         if (tokens[i] == "SUB-PROCEDURE")
             i++;
         string subprocedure = resolved_subprocedure_name(tokens[i], state);
-        // Valid options: No WITH or WITH with at least one paramter
+        // Valid options: no WITH, or a comma-separated argument list.
         if (i == tokens.size() - 1 ||
             (i < tokens.size() - 2 && tokens[i + 1] == "WITH"))
         {
             if (!in_procedure_section(state))
                 badcode("CALL outside PROCEDURE section", state.where);
-            vector<string> parameters(
-                i != tokens.size() - 1 ? tokens.begin() + i + 2 : tokens.end(),
-                tokens.end());
+            vector<string> parameters;
+            if (i != tokens.size() - 1)
+                parameters = split_comma_arguments(
+                    join_tokens(tokens, i + 2, tokens.size()), state);
+            vector<composable_expression> arguments;
             vector<vector<unsigned int>> types;
             for (string &parameter : parameters)
             {
-                if (is_number(parameter))
-                    types.push_back({1});
-                else if (is_string(parameter))
-                    types.push_back({2});
-                else if (variable_exists(parameter, state))
-                    types.push_back(variable_type(parameter, state));
-                else
-                    badcode("CALL with invalid parameter \"" + parameter + "\"",
-                            state.where);
+                composable_expression argument = compile_expression(parameter, state);
+                if (argument.boolean_value)
+                    badcode("CALL arguments cannot be conditions", state.where);
+                types.push_back(argument.type);
+                arguments.push_back(argument);
             }
             bool correct_types =
                 state.correct_subprocedure_types(subprocedure, types);
@@ -817,7 +900,38 @@ void compile_line(vector<string> &tokens, compiler_state &state)
                     badcode("CALL parameter types don't match SUB-PROCEDURE declaration",
                             state.where);
             }
-            add_call_code(subprocedure, parameters, state);
+            vector<unsigned int> return_type =
+                state.subprocedure_returns.count(subprocedure) > 0
+                    ? state.subprocedure_returns[subprocedure]
+                    : vector<unsigned int>{0};
+            if (return_type != vector<unsigned int>{0} &&
+                state.subprocedure_parameter_references.count(subprocedure) > 0)
+                for (size_t argument = 0; argument < arguments.size(); ++argument)
+                    if (argument < state.subprocedure_parameter_references[subprocedure].size() &&
+                        state.subprocedure_parameter_references[subprocedure][argument] &&
+                        !arguments[argument].assignable)
+                        badcode("Reference CALL argument " +
+                                    to_string(argument + 1) +
+                                    " must be a mutable variable",
+                                state.where);
+            string code = fix_identifier(subprocedure, false) + "(";
+            for (size_t argument = 0; argument < arguments.size(); ++argument)
+            {
+                if (argument > 0) code += ", ";
+                if (return_type == vector<unsigned int>{0} &&
+                    !arguments[argument].assignable)
+                {
+                    string temporary = state.new_literal_parameter_var();
+                    state.add_code(state.get_c_type(arguments[argument].type) + " " +
+                                       temporary + " = " + arguments[argument].code + ";",
+                                   state.where);
+                    code += temporary;
+                }
+                else
+                    code += arguments[argument].code;
+            }
+            code += ");";
+            state.add_code(code, state.where);
             return;
         }
     }
@@ -857,12 +971,38 @@ void compile_line(vector<string> &tokens, compiler_state &state)
             badcode("Parallel calls don't support argument passing.", state.where);
         }
     }
+    if (tokens.size() > 1 && tokens[0] == "RETURN")
+    {
+        if (!in_procedure_section(state))
+            badcode("RETURN outside PROCEDURE section", state.where);
+        if (state.current_subprocedure == "")
+            badcode("RETURN found outside subprocedure", state.where);
+        vector<unsigned int> return_type = state.subprocedure_returns.count(
+                                               state.current_subprocedure)
+                                               ? state.subprocedure_returns[
+                                                     state.current_subprocedure]
+                                               : vector<unsigned int>{0};
+        if (return_type == vector<unsigned int>{0})
+            badcode("Non-returning SUB-PROCEDURE cannot RETURN a value", state.where);
+        composable_expression value =
+            compile_expression(join_tokens(tokens, 1, tokens.size()), state);
+        if (value.boolean_value || value.type != return_type)
+            badcode("RETURN expression doesn't match the SUB-PROCEDURE return type",
+                    state.where);
+        state.current_subprocedure_has_return = true;
+        state.add_code("return " + value.code + ";", state.where);
+        return;
+    }
     if (line_like("RETURN", tokens, state))
     {
         if (!in_procedure_section(state))
             badcode("RETURN outside PROCEDURE section", state.where);
         if (state.current_subprocedure == "")
             badcode("RETURN found outside subprocedure", state.where);
+        if (state.subprocedure_returns.count(state.current_subprocedure) > 0 &&
+            state.subprocedure_returns[state.current_subprocedure] !=
+                vector<unsigned int>{0})
+            badcode("Returning SUB-PROCEDURE must RETURN a value", state.where);
         // C++ Code
         state.add_code("return;", state.where);
         return;
@@ -1430,6 +1570,33 @@ void compile_line(vector<string> &tokens, compiler_state &state)
     }
 
     // I/O Statements
+    if (tokens.size() > 1 && (tokens[0] == "DISPLAY" || tokens[0] == "PRINT"))
+    {
+        bool composable = has_expression_punctuation(
+            join_tokens(tokens, 1, tokens.size()));
+        for (size_t i = 1; i < tokens.size(); ++i)
+            if (tokens[i] == "+" || tokens[i] == "-" || tokens[i] == "*" ||
+                tokens[i] == "/" || tokens[i] == "%" ||
+                tokens[i] == "MODULO")
+                composable = true;
+        if (composable)
+        {
+            if (!in_procedure_section(state))
+                badcode(tokens[0] + " statement outside PROCEDURE section",
+                        state.where);
+            vector<string> values = split_comma_arguments(
+                join_tokens(tokens, 1, tokens.size()), state);
+            for (const string &source : values)
+            {
+                composable_expression value = compile_expression(source, state);
+                if (value.boolean_value)
+                    badcode(tokens[0] + " cannot output a condition", state.where);
+                state.add_code("cout << " + value.code + " << flush;", state.where);
+            }
+            if (tokens[0] == "PRINT") state.add_code("cout << endl;", state.where);
+            return;
+        }
+    }
     if (line_like("DISPLAY $display", tokens, state))
     {
         if (!in_procedure_section(state))
@@ -1919,6 +2086,24 @@ void compile_line(vector<string> &tokens, compiler_state &state)
         state.add_code(
             get_c_variable(state, tokens[3]) + ".inner_collection.emplace_back();",
             state.where);
+        return;
+    }
+    if (tokens.size() >= 4 && tokens[0] == "PUSH" &&
+        tokens[tokens.size() - 2] == "TO" &&
+        variable_exists(tokens.back(), state) &&
+        variable_type(tokens.back(), state).back() == 3)
+    {
+        if (!in_procedure_section(state))
+            badcode("PUSH statement outside PROCEDURE section", state.where);
+        composable_expression value = compile_expression(
+            join_tokens(tokens, 1, tokens.size() - 2), state);
+        vector<unsigned int> element_type = variable_type(tokens.back(), state);
+        element_type.pop_back();
+        if (value.boolean_value || value.type != element_type)
+            badcode("List - Value type mismatch", state.where);
+        state.add_code(get_c_variable(state, tokens.back()) +
+                           ".inner_collection.push_back(" + value.code + ");",
+                       state.where);
         return;
     }
     if (line_like("PUSH $anyVar TO $list", tokens, state))

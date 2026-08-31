@@ -28,7 +28,7 @@ An LDPL program is organised into declarative and executable sections. Only one 
 
 - **Data section:** Begins with `DATA:` or `-- DATA --`. Each line declares one variable and its type. External variables may be marked with the keyword `EXTERNAL` (see “C++ Extensions”).
 - **Procedure section:** Begins with `PROCEDURE` or `-- PROCEDURE --`. Statements in this section execute in order. Code appearing before any sub‑procedure executes at program start. You may define sub‑procedures within this section.
-- **Sub‑procedures:** A sub‑procedure is defined using `SUB‑PROCEDURE Name` (or the short form `SUB Name`) and ends with `END SUB‑PROCEDURE` (or `END SUB`). Each sub‑procedure may optionally contain a `PARAMETERS:` section listing parameter names and a `LOCAL DATA:` section declaring local variables; you may also use the alternate header forms `-- PARAMETERS --` and `-- LOCAL DATA --`. Sub‑procedures cannot be nested inside other sub‑procedures or within control flow blocks.
+- **Sub‑procedures:** A sub‑procedure is defined using `SUB‑PROCEDURE Name` (or the short form `SUB Name`) and ends with `END SUB‑PROCEDURE` (or `END SUB`). Add `RETURNS <type>` to make it return a value. Each sub‑procedure may optionally contain a `PARAMETERS:` section listing parameter names and a `LOCAL DATA:` section declaring local variables; you may also use the alternate header forms `-- PARAMETERS --` and `-- LOCAL DATA --`. Sub‑procedures cannot be nested inside other sub‑procedures or within control flow blocks.
 - **Structures:** Named structures are declared before the `DATA` and `PROCEDURE` sections using `STRUCTURE Name` … `END STRUCTURE`. A structure contains named, statically typed fields. A field may be a number, text, list, map, or a previously declared structure.
 - **Include files:** Use `INCLUDE "file.ldpl"` to copy the contents of another LDPL file into the current one. The `include` statement must appear before the *DATA* section of the including file. Each LDPL source file must declare its own *DATA* and *PROCEDURE* sections (or their synonyms `-- DATA --` and `-- PROCEDURE --`). The *DATA* section may be omitted if no variables are declared.
 - **Modules:** `IMPORT Name FROM "file.ldpl"` (or `IMPORT "file.ldpl" AS Name`) compiles a source file in a namespace. Exported values, structures, constants, and sub-procedures are accessed with qualified names such as `HTTP:status`, `HTTP:Response`, and `CALL HTTP:GET`. Imports must appear before `DATA` and `PROCEDURE`.
@@ -55,17 +55,33 @@ Immutable scalar constants are declared in the `DATA` section with `name IS CONS
 
 ## Sub‑procedures and Calls
 
-A sub‑procedure encapsulates reusable code. Declare a sub‑procedure with `SUB‑PROCEDURE Name` and end it with `END SUB‑PROCEDURE`. After declaring the sub‑procedure name, you may include a `PARAMETERS:` section listing names of parameters and a `LOCAL DATA:` section for local variables. Parameters are passed by reference, so changes to parameters inside the sub‑procedure affect the caller’s variables.
+A sub‑procedure encapsulates reusable code. Declare a sub‑procedure with `SUB‑PROCEDURE Name` and end it with `END SUB‑PROCEDURE`. After declaring the sub‑procedure name, you may include a `PARAMETERS:` section listing names of parameters and a `LOCAL DATA:` section for local variables. Parameters of ordinary sub-procedures are passed by reference, so changes affect the caller. Parameters of returning sub-procedures are passed by value unless declared as `name IS REFERENCE <type>`; reference arguments must be mutable variables or fields.
 
 The `PARAMETERS` and `LOCAL DATA` sections are optional. Parameter names and local variable names must be unique: you cannot declare the same name twice within a sub‑procedure. Variables declared in a sub‑procedure shadow global variables of the same name; within the sub‑procedure, all references to that name use the local variable. Each call to a sub‑procedure receives its own copy of the local variables, allowing recursion. You may call a sub‑procedure before it is defined, but every sub‑procedure used must be defined somewhere in your program before compilation finishes. A sub‑procedure that declares parameters must be called with `WITH` followed by the same number of arguments in the same order; a sub‑procedure with no parameters must be called without `WITH`.
 
 Call a sub‑procedure using `CALL Name` or `CALL SUB‑PROCEDURE Name`. If the sub‑procedure expects parameters, append `WITH` followed by variables to pass. For example:
 
 ```
-call addValues with a b sum
+call addValues with a, b, sum
 ```
 
-This call passes variables `a`, `b` and `sum` by reference to the sub‑procedure `addValues`. LDPL checks that parameter types match. The `RETURN` statement exits the current sub‑procedure. Use `EXIT` to terminate the entire program immediately.
+This call passes variables `a`, `b` and `sum` by reference to the sub‑procedure `addValues`. Commas between multiple arguments are mandatory. LDPL checks that parameter types match. The `RETURN` statement exits the current sub‑procedure. Use `EXIT` to terminate the entire program immediately.
+
+A returning sub-procedure is declared with `RETURNS <type>` and called as an expression. Its arguments require commas and its `RETURN` statement requires a value:
+
+```
+SUB-PROCEDURE TOTAL RETURNS NUMBER
+PARAMETERS:
+price IS NUMBER
+quantity IS NUMBER
+PROCEDURE
+RETURN price * quantity
+END SUB-PROCEDURE
+
+SET result TO TOTAL(price, quantity)
+```
+
+Returning sub-procedures support scalar, structure, LIST, and MAP return types. Calls compose with other calls and operators and may be qualified through modules, such as `MATH:CLAMP(value, 0, 100)`.
 
 To call a C++ function defined in an extension, use `CALL EXTERNAL FunctionName`. The name must follow the external naming rules described in the C++ Extensions section.
 
@@ -75,7 +91,8 @@ LDPL provides several statements for controlling program execution.
 
 ### Assignment
 
-- `STORE <expression> IN <variable>` – evaluates an expression and assigns the result to a variable. Expressions may be numeric or text. The reverse form `IN <variable> STORE <expression>` is equivalent.
+- `SET <variable> TO <expression>` – evaluates a composable expression and assigns its result. Expressions include literals, variables, constants, calls, arithmetic, text concatenation, comparisons, and boolean operators.
+- `STORE <expression> IN <variable>` – assigns a simple numeric or text expression. The reverse form `IN <variable> STORE <expression>` is equivalent. `SET` is recommended for composed expressions.
 - `COPY <aggregate> TO <aggregate>` – copies an entire structure or collection to another value of exactly the same type. Structure copies are deep value copies, including nested structures, lists, and maps.
 
 ### Conditional Statements
@@ -123,7 +140,7 @@ LDPL supports basic multithreading and mutual exclusion.
 
 LDPL provides both expression evaluation and imperative arithmetic commands. In the following descriptions, *number expressions* may be numeric variables, literals or the result of other arithmetic operations.
 
-- **Expression evaluation:** `IN <numberVar> SOLVE <expression>` evaluates a mathematical expression containing `+`, `-`, `*` and `/` with parentheses and stores the result in `<numberVar>`. Expressions are evaluated in left‑to‑right order respecting parentheses.
+- **Expression evaluation:** `SET <variable> TO <expression>` evaluates typed, composable expressions with conventional precedence. NUMBER supports unary `-`, `+`, `-`, `*`, `/`, `%`, and `MODULO`; TEXT supports `+` with another TEXT. Returning calls use `NAME(argument, argument)`. The older `IN <numberVar> SOLVE <expression>` form remains available.
 - **Addition:** `ADD <a> AND <b> IN <c>` adds `a` and `b` and stores the sum in `c`. The reverse form `IN <c> ADD <a> AND <b>` is equivalent.
 - **Subtraction:** `SUBTRACT <a> FROM <b> IN <c>` computes `b - a` and stores the result. Reverse form: `IN <c> SUBTRACT <a> FROM <b>`.
 - **Multiplication:** `MULTIPLY <a> BY <b> IN <c>` stores `a × b` in `c`. Reverse form: `IN <c> MULTIPLY <a> BY <b>`.

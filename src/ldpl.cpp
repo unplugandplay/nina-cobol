@@ -18,6 +18,7 @@
 #include <memory>
 
 #include "aux/aux_c_format.cpp"     // Contains auxiliary functions that turn LDPL identifiers / expressions into C / C++ identifiers / expressions
+#include "aux/aux_expression.cpp"   // Typed, composable LDPL expressions
 #include "aux/aux_code.cpp"         // Contains auxiliary functions that add C++ code to the generated C++ file
 #include "aux/aux_compile_line.cpp" // Contains the behemoth compile_line function that pattern-matches lines and compiles them
 #include "aux/aux_container.cpp"    // Contains auxiliary functions to split and access [multi]containers
@@ -87,9 +88,128 @@ void accept_and_compile(compiler_state &state)
     compile(lines, state);
 }
 
+static void predeclare_subprocedure_signatures(const vector<string> &lines,
+                                               size_t procedure_line,
+                                               compiler_state &state)
+{
+    bool in_quote = false;
+    for (size_t i = procedure_line + 1; i < lines.size(); ++i)
+    {
+        string line = lines[i];
+        trim(line);
+        if (in_quote)
+        {
+            string upper_line;
+            for (char character : line)
+                upper_line += toupper(static_cast<unsigned char>(character));
+            if (upper_line == "END QUOTE") in_quote = false;
+            continue;
+        }
+        vector<string> tokens;
+        tokenize(line, tokens, state.where, true, ' ');
+        if (tokens.size() == 4 && tokens[0] == "STORE" && tokens[1] == "QUOTE" &&
+            tokens[2] == "IN")
+        {
+            in_quote = true;
+            continue;
+        }
+        if (tokens.size() < 2 ||
+            (tokens[0] != "SUB-PROCEDURE" && tokens[0] != "SUB"))
+            continue;
+
+        const string name = resolved_subprocedure_name(tokens[1], state);
+        if (state.subprocedure_returns.count(name) > 0 ||
+            state.predeclared_subprocedure_parameters.count(name) > 0)
+            badcode("Duplicate declaration for SUB-PROCEDURE \"" + name + "\"",
+                    {state.where.current_file, static_cast<int>(i + 1)});
+
+        vector<unsigned int> return_type{0};
+        if (tokens.size() > 2)
+        {
+            if (tokens[2] != "RETURNS" ||
+                !parse_declared_type(tokens, 3, tokens.size(), state, return_type))
+                badcode("Malformed return type for SUB-PROCEDURE \"" + name + "\"",
+                        {state.where.current_file, static_cast<int>(i + 1)});
+        }
+        state.subprocedure_returns[name] = return_type;
+
+        vector<vector<unsigned int>> parameter_types;
+        vector<bool> parameter_references;
+        size_t j = i + 1;
+        if (j < lines.size())
+        {
+            string section_line = lines[j];
+            trim(section_line);
+            vector<string> section_tokens;
+            tokenize(section_line, section_tokens, state.where, true, ' ');
+            if ((section_tokens.size() == 1 &&
+                 section_tokens[0] == "PARAMETERS:") ||
+                (section_tokens.size() == 3 && section_tokens[0] == "--" &&
+                 section_tokens[1] == "PARAMETERS" && section_tokens[2] == "--"))
+            {
+                for (++j; j < lines.size(); ++j)
+                {
+                    string parameter_line = lines[j];
+                    trim(parameter_line);
+                    vector<string> parameter_tokens;
+                    tokenize(parameter_line, parameter_tokens, state.where, true, ' ');
+                    if (parameter_tokens.empty()) continue;
+                    if ((parameter_tokens.size() == 1 &&
+                         parameter_tokens[0] == "PROCEDURE") ||
+                        (parameter_tokens.size() >= 2 && parameter_tokens[0] == "LOCAL" &&
+                         parameter_tokens[1] == "DATA:") ||
+                        (parameter_tokens.size() >= 3 && parameter_tokens[0] == "--" &&
+                         (parameter_tokens[1] == "PROCEDURE" ||
+                          parameter_tokens[1] == "LOCAL")))
+                        break;
+                    if (parameter_tokens.size() < 3 || parameter_tokens[1] != "IS")
+                        badcode("Malformed parameter declaration in SUB-PROCEDURE \"" +
+                                    name + "\"",
+                                {state.where.current_file, static_cast<int>(j + 1)});
+                    vector<unsigned int> parameter_type;
+                    size_t type_begin = 2;
+                    bool reference = false;
+                    if (parameter_tokens[type_begin] == "REFERENCE")
+                    {
+                        reference = true;
+                        ++type_begin;
+                    }
+                    if (!parse_declared_type(parameter_tokens, type_begin,
+                                             parameter_tokens.size(), state,
+                                             parameter_type))
+                        badcode("Unknown parameter type in SUB-PROCEDURE \"" + name +
+                                    "\"",
+                                {state.where.current_file, static_cast<int>(j + 1)});
+                    parameter_types.push_back(parameter_type);
+                    parameter_references.push_back(reference);
+                }
+            }
+        }
+        state.predeclared_subprocedure_parameters[name] = parameter_types;
+        state.subprocedure_parameter_references[name] = parameter_references;
+
+        string prototype = state.get_c_type(return_type) + " " +
+                           fix_identifier(name, false) + "(";
+        if (return_type == vector<unsigned int>{0}) prototype = "void " +
+                           fix_identifier(name, false) + "(";
+        for (size_t parameter = 0; parameter < parameter_types.size(); ++parameter)
+        {
+            prototype += state.get_c_type(parameter_types[parameter]);
+            if (return_type == vector<unsigned int>{0} ||
+                parameter_references[parameter])
+                prototype += "&";
+            if (parameter + 1 < parameter_types.size()) prototype += ", ";
+        }
+        prototype += ");";
+        state.add_var_code(prototype);
+        state.emitted_subprocedure_prototypes[name] = true;
+    }
+}
+
 void compile(vector<string> &lines, compiler_state &state)
 {
     // -- Takes a vector of LDPL source lines and compiles them to C++ --
+    bool signatures_scanned = false;
     // For each line in the source code
     for (size_t line_num = 1; line_num <= lines.size(); ++line_num)
     {
@@ -288,6 +408,14 @@ void compile(vector<string> &lines, compiler_state &state)
         }
         if (tokens.size() == 0)
             continue;
+        if (!signatures_scanned && state.current_subprocedure == "" &&
+            ((tokens.size() == 1 && tokens[0] == "PROCEDURE") ||
+             (tokens.size() == 3 && tokens[0] == "--" &&
+              tokens[1] == "PROCEDURE" && tokens[2] == "--")))
+        {
+            predeclare_subprocedure_signatures(lines, line_num - 1, state);
+            signatures_scanned = true;
+        }
         compile_line(tokens, state);
         bool error_boundary =
             (tokens.size() == 1 && tokens[0] == "TRY") ||

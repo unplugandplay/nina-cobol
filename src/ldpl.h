@@ -88,6 +88,22 @@ bool variable_exists(string &token, compiler_state &state);
 bool is_subprocedure(string &token, compiler_state &state);
 string get_c_variable(compiler_state &state, string &variable);
 string get_c_expression(compiler_state &state, string &expression);
+struct composable_expression {
+  string code;
+  vector<unsigned int> type;
+  bool boolean_value;
+  bool assignable;
+  composable_expression(string generated = "",
+                        vector<unsigned int> value_type = vector<unsigned int>(),
+                        bool is_boolean = false, bool is_assignable = false)
+      : code(generated), type(value_type), boolean_value(is_boolean),
+        assignable(is_assignable) {}
+};
+composable_expression compile_expression(const string &expression,
+                                         compiler_state &state);
+vector<string> split_comma_arguments(const string &arguments,
+                                     compiler_state &state);
+string join_tokens(const vector<string> &tokens, size_t begin, size_t end);
 string get_c_char_array(compiler_state &state, string &text);
 string get_c_string(compiler_state &state, string &expression);
 string get_c_number(compiler_state &state, string &expression);

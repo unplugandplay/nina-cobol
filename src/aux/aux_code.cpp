@@ -11,14 +11,28 @@ void open_subprocedure_code(compiler_state &state) {
   vector<string> &parameters = state.subprocedures[name];
   vector<vector<unsigned int>> types;
   string code;
-  code = "void " + fix_identifier(name, false) + "(";
+  vector<unsigned int> return_type = state.subprocedure_returns.count(name) > 0
+                                         ? state.subprocedure_returns[name]
+                                         : vector<unsigned int>{0};
+  code = (return_type == vector<unsigned int>{0}
+              ? "void"
+              : state.get_c_type(return_type)) +
+         " " + fix_identifier(name, false) + "(";
   for (size_t i = 0; i < parameters.size(); ++i) {
     string identifier = fix_identifier(parameters[i], true, state);
     string type = state.get_c_type(state.variables[name][parameters[i]]);
-    code += type + " & " + identifier;
+    bool reference = return_type == vector<unsigned int>{0} ||
+                     (state.subprocedure_parameter_references.count(name) > 0 &&
+                      i < state.subprocedure_parameter_references[name].size() &&
+                      state.subprocedure_parameter_references[name][i]);
+    code += type + (reference ? " & " : " ") + identifier;
     if (i < parameters.size() - 1) code += ", ";
     types.push_back(state.variables[name][parameters[i]]);
   }
+  if (state.predeclared_subprocedure_parameters.count(name) > 0 &&
+      state.predeclared_subprocedure_parameters[name] != types)
+    badcode("SUB-PROCEDURE parameter types don't match its predeclared signature",
+            state.where);
   if (!state.correct_subprocedure_types(name, types))
     badcode(
         "SUB-PROCEDURE declaration parameter types doesn't match previous CALL",

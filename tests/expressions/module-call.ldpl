@@ -1,0 +1,6 @@
+IMPORT MATH FROM "math.ldpl"
+DATA:
+result IS NUMBER
+PROCEDURE
+SET result TO MATH:TRIPLE(4)
+DISPLAY result

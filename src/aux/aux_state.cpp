@@ -198,6 +198,8 @@ bool is_subprocedure(string &token, compiler_state &state)
 {
   // -- Returns if an identifier maps to a valid, existing sub-procedure --
   string resolved = resolved_subprocedure_name(token, state);
+  if (state.predeclared_subprocedure_parameters.count(resolved) > 0)
+    return true;
   for (auto &subprocedure : state.subprocedures)
     if (subprocedure.first == resolved)
       return true;

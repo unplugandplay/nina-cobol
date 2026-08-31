@@ -69,7 +69,12 @@ test-features:
 	cd src && $(CXX) $(TEST_FLAGS) $(SOURCE) -o ../build/ldpl-test
 	sh tests/features/run.sh ./build/ldpl-test
 
-test: test-structures test-features
+test-expressions:
+	mkdir -p build
+	cd src && $(CXX) $(TEST_FLAGS) $(SOURCE) -o ../build/ldpl-test
+	sh tests/expressions/run.sh ./build/ldpl-test
+
+test: test-structures test-features test-expressions
 
 # Delete built file
 clean:

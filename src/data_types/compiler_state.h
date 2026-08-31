@@ -28,6 +28,15 @@ struct compiler_state {
   map<string, vector<string>> structure_field_order;
   map<string, vector<string>>
       subprocedures;  // subprocedure -> list of parameter identifiers
+  // Signatures are collected when a PROCEDURE section is reached.  This keeps
+  // forward and mutually-recursive calls possible even though LDPL is compiled
+  // in one pass.
+  map<string, vector<vector<unsigned int>>> predeclared_subprocedure_parameters;
+  map<string, vector<bool>> subprocedure_parameter_references;
+  // {0} means that the sub-procedure does not return a value.
+  map<string, vector<unsigned int>> subprocedure_returns;
+  map<string, bool> emitted_subprocedure_prototypes;
+  bool current_subprocedure_has_return = false;
   void add_var_code(string code) { this->variable_code.push_back(code); }
   void add_code(string code) {
     auto& output =
@@ -50,6 +59,7 @@ struct compiler_state {
   stack<int> block_stack;  // 0 sub, 1 if, 2 loop, 3 else, 4 try, 5 handler
   void open_subprocedure(const string& subprocedure) {
     current_subprocedure = subprocedure;
+    current_subprocedure_has_return = false;
     block_stack.push(0);
   }
   void close_subprocedure() {
@@ -142,6 +152,8 @@ struct compiler_state {
           actual_types.push_back(variables[name][parameter]);
         return types == actual_types;
       }
+    if (predeclared_subprocedure_parameters.count(name) > 0)
+      return types == predeclared_subprocedure_parameters[name];
     return true;
   }
   stack<string> working_dir;

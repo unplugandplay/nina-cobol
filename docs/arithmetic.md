@@ -1,4 +1,10 @@
 !!!Note
+    For new code, `SET destination TO <expression>` supports typed, composable
+    expressions and returning procedure calls. See
+    [Expressions and returning sub-procedures](expressions.md). `IN ... SOLVE`
+    remains available for compatibility and simple numeric calculations.
+
+!!!Note
     Starting on LDPL 5.2.1, all arithmetic statements also accept an IN-first synonym. This
     means that in addition to writing `ADD 1 AND 2 IN myVar`, you can now also write
     `IN myVar ADD 1 AND 2`.

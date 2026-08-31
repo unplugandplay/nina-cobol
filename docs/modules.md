@@ -21,11 +21,17 @@ importing file's procedure statements.
 Every module-level declaration is qualified by the import name:
 
 ```coffeescript
-CALL HTTP:GET WITH url response
+CALL HTTP:GET WITH url, response
 DISPLAY HTTP:DEFAULT-TIMEOUT LF
 
 DATA:
 reply IS HTTP:Response
+```
+
+Returning module procedures are expression calls:
+
+```coffeescript
+SET reply TO HTTP:GET(url)
 ```
 
 Inside `http.ldpl`, these names are written without the `HTTP:` prefix. This

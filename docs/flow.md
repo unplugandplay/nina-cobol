@@ -245,28 +245,29 @@ The `CALL SUB-PROCEDURE` statement executes a SUB-PROCEDURE. Once the SUB-PROCED
 
 ```coffeescript
 CALL SUB-PROCEDURE <sub-procedure name>
-CALL SUB-PROCEDURE <sub-procedure name> WITH <multiple NUMBER, TEXT, TEXT-VAR, NUMBER-VAR, MAP or LIST>
+CALL SUB-PROCEDURE <sub-procedure name> WITH <argument>, <argument>, ...
 ```
 
 Or
 
 ```coffeescript
 CALL <sub-procedure name>
-CALL <sub-procedure name> WITH <multiple NUMBER, TEXT, TEXT-VAR, NUMBER-VAR, MAP or LIST>
+CALL <sub-procedure name> WITH <argument>, <argument>, ...
 ```
 
 Of course, a SUB-PROCEDURE must be declared **somewhere** in your program for you to call it.
 
-If the SUB-PROCEDURE you call doesn't have any declared parameters, you must call it without the `WITH` keyword, otherwise you must include it and pass all required parameters after it, in the same order declared in the `PARAMETERS` section of the SUB-PROCEDURE.
+If the SUB-PROCEDURE you call doesn't have any declared parameters, you must call it without the `WITH` keyword. Otherwise, include `WITH` and pass all required parameters in declaration order. Commas between arguments are mandatory. A single argument does not need a comma.
 
 ## `RETURN`
 
-The `RETURN` statement returns from a SUB-PROCEDURE. Will throw a compiler error if used outside one.
+The `RETURN` statement exits a non-returning SUB-PROCEDURE. In a SUB-PROCEDURE declared with `RETURNS <type>`, use `RETURN <expression>` to return its value.
 
 **Syntax:**
 
 ```coffeescript
 RETURN
+RETURN <expression>
 ```
 
 ## `EXIT`
