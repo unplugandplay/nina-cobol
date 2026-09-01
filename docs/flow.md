@@ -394,8 +394,8 @@ PROCEDURE:
 	# We can imagine that we have only one new statement:
 	# DISPLAY <NUMBER or NUMBER-VAR or TEXT or TEXT-VAR> <NUMBER or NUMBER-VAR> TIMES
 
-	DISPLAY 100 2 TIMES # This executes: CALL displayNValueTimes with 100 2
-	DISPLAY "Hi!" 3 TIMES # This executes: CALL displayTValueTimes with "Hi!" 3
+	DISPLAY 100 2 TIMES # This executes: CALL displayNValueTimes with 100, 2
+	DISPLAY "Hi!" 3 TIMES # This executes: CALL displayTValueTimes with "Hi!", 3
 
 	# This program displays "100 100 Hi! Hi! "
 ```

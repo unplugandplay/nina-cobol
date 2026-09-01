@@ -206,7 +206,6 @@ The `TAN _ IN _` statement calculates the tangent of a NUMBER and stores the res
 ```coffeescript
 TAN <NUMBER-VAR or NUMBER> IN <NUMBER-VAR>
 ```
-```
 
 ## `INCREMENT _`
 

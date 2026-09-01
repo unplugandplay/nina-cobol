@@ -173,7 +173,7 @@ For example, if you declare a sub-procedure like this:
 You may then call it like this:
 
     :::coffeescript
-    call addTwoNumbers with 5 6 7
+    call addTwoNumbers with 5, 6, 7
     
 And `a` will take the value 5, `b` the value 6 and `c` the value 7.
 
@@ -198,7 +198,7 @@ original variable will be modified as well. Let's see an example:
         end sub
 
         # the variable result is initialized to 0 by default
-        call addTwoNumbers with 4 5 result
+        call addTwoNumbers with 4, 5, result
         display "The result is: " result "." lf
         
 !!!hint
@@ -213,7 +213,7 @@ That code displays the following text:
     The result is 9.
     
 This is because, as we called the variable with a variable as a parameter
-(`call addTwoNumbers with 4 5 result`, **result** is the variable here) it was
+(`call addTwoNumbers with 4, 5, result`, **result** is the variable here) it was
 *somewhat* aliased to the local parameter variable `c` and, thus, when we
 solved `a + b` in `c`, we stored the result of `a + b` in `result`.
 
