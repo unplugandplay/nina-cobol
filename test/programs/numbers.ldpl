@@ -1,0 +1,115 @@
+-- DATA --
+n IS NUMBER
+t IS TEXT
+total IS NUMBER
+i IS NUMBER
+
+-- PROCEDURE --
+DISPLAY "ldpl numbers on wasm" LF
+
+SET n TO 42
+DISPLAY "int: " n LF
+SET n TO -7
+DISPLAY "neg: " n LF
+SET n TO 100000000000
+DISPLAY "big: " n LF
+SET n TO 1/3
+DISPLAY "third: " n LF
+SET n TO 2.5
+DISPLAY "real: " n LF
+
+SET total TO 2 + 3 * 4
+DISPLAY "prec: " total LF
+SET total TO (2 + 3) * 4
+DISPLAY "paren: " total LF
+SET total TO 17 MODULO 5
+DISPLAY "mod: " total LF
+SET total TO -7 MODULO 3
+DISPLAY "modneg: " total LF
+
+IN total SOLVE 6 * 7
+DISPLAY "solve: " total LF
+
+STORE "hello" IN t
+JOIN t AND ", wasm" IN t
+DISPLAY "join: " t LF
+GET LENGTH OF t IN n
+DISPLAY "len: " n LF
+
+IF n = 12 THEN
+    DISPLAY "eq: yes" LF
+ELSE
+    DISPLAY "eq: no" LF
+END IF
+IF n IS GREATER THAN 5 THEN
+    DISPLAY "gt: yes" LF
+END IF
+IF n IS NOT EQUAL TO 3 THEN
+    DISPLAY "ne: yes" LF
+END IF
+IF NOT (n = 1) AND n > 1 THEN
+    DISPLAY "logic: yes" LF
+END IF
+IF n = 4 OR n = 12 THEN
+    DISPLAY "or: yes" LF
+END IF
+
+SET total TO 0
+FOR i FROM 1 TO 5 DO
+    IN total SOLVE total + i
+REPEAT
+DISPLAY "sum: " total LF
+
+SET total TO 0
+FOR i FROM 10 TO 1 STEP -3 DO
+    IN total SOLVE total + 1
+REPEAT
+DISPLAY "down: " total LF
+
+SET total TO 0
+FOR i FROM 1 TO 10 STEP 3 INCLUSIVE DO
+    IN total SOLVE total + 1
+REPEAT
+DISPLAY "incl: " total LF
+
+SET total TO 0
+SET i TO 0
+WHILE i < 4 DO
+    IN total SOLVE total + 10
+    IN i SOLVE i + 1
+REPEAT
+DISPLAY "while: " total LF
+
+SET total TO 0
+FOR i FROM 1 TO 10 DO
+    IF i > 4 THEN
+        BREAK
+    END IF
+    IN total SOLVE total + i
+REPEAT
+DISPLAY "break: " total LF
+
+SET total TO 0
+FOR i FROM 1 TO 5 DO
+    IF i = 3 THEN
+        CONTINUE
+    END IF
+    IN total SOLVE total + i
+REPEAT
+DISPLAY "continue: " total LF
+
+CALL BUMP WITH total
+DISPLAY "bumped: " total LF
+
+STORE QUOTE IN t
+    a quoted line
+    and another
+END QUOTE
+DISPLAY t
+SUB-PROCEDURE BUMP
+    PARAMETERS:
+    x IS NUMBER
+    PROCEDURE
+    IN x SOLVE x + 1
+    RETURN
+END SUB-PROCEDURE

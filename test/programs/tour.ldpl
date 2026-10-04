@@ -1,0 +1,169 @@
+# A tour of the subset this compiler implements. Used by the test harness as a
+# differential case against the reference LDPL compiler.
+STRUCTURE Person
+    name IS TEXT
+    age IS NUMBER
+END STRUCTURE
+
+-- DATA --
+answer IS NUMBER
+greeting IS TEXT
+total IS NUMBER
+i IS NUMBER
+word IS TEXT
+p IS Person
+people IS LIST OF Person
+numbers IS LIST OF NUMBER
+words IS LIST OF TEXT
+max-age IS NUMBER
+
+-- PROCEDURE --
+DISPLAY "ldpl on wasm" LF
+DISPLAY "-------------" LF
+
+# Numbers print at full precision.
+SET answer TO 42
+DISPLAY "answer is " answer LF
+SET answer TO 1/3
+DISPLAY "third is " answer LF
+SET answer TO 100000000000
+DISPLAY "big is " answer LF
+SET answer TO -7
+DISPLAY "neg is " answer LF
+
+# Text
+STORE "hello" IN greeting
+JOIN greeting AND ", world" IN greeting
+DISPLAY greeting LF
+GET LENGTH OF greeting IN answer
+DISPLAY "len " answer LF
+
+# Arithmetic
+SET answer TO 2 + 3 * 4
+DISPLAY "prec " answer LF
+SET answer TO (2 + 3) * 4
+DISPLAY "parens " answer LF
+SET answer TO 17 MODULO 5
+DISPLAY "mod " answer LF
+SET answer TO 10 - 3 - 2
+DISPLAY "left assoc " answer LF
+
+# The arithmetic-statement form
+IN answer SOLVE 6 * 7
+DISPLAY "solve " answer LF
+
+# Comparison, including the word forms and the bare IS
+IF answer = 42 THEN
+    DISPLAY "eq" LF
+END IF
+IF answer IS GREATER THAN 40 THEN
+    DISPLAY "gt" LF
+END IF
+IF answer IS NOT EQUAL TO 41 THEN
+    DISPLAY "ne" LF
+END IF
+IF NOT (answer = 41) AND answer > 1 THEN
+    DISPLAY "logic" LF
+END IF
+
+# Loops
+SET total TO 0
+FOR i FROM 1 TO 5 DO
+    IN total SOLVE total + i
+REPEAT
+DISPLAY "sum " total LF
+
+SET total TO 0
+FOR i FROM 10 TO 1 STEP -3 DO
+    IN total SOLVE total + 1
+REPEAT
+DISPLAY "down " total LF
+
+SET total TO 0
+FOR i FROM 1 TO 10 STEP 3 INCLUSIVE DO
+    IN total SOLVE total + 1
+REPEAT
+DISPLAY "incl " total LF
+
+SET total TO 0
+SET i TO 0
+WHILE i < 4 DO
+    IN total SOLVE total + 10
+    IN i SOLVE i + 1
+REPEAT
+DISPLAY "while " total LF
+
+# Lists
+PUSH 3 TO numbers
+PUSH 1 TO numbers
+PUSH 2 TO numbers
+GET LENGTH OF numbers IN answer
+DISPLAY "count " answer LF
+SORT numbers
+DISPLAY numbers:0 " " numbers:1 " " numbers:2 LF
+REVERSE numbers
+DISPLAY numbers:0 " " numbers:1 " " numbers:2 LF
+POP numbers INTO answer
+DISPLAY "popped " answer LF
+GET LENGTH OF numbers IN answer
+DISPLAY "count " answer LF
+CLEAR numbers
+GET LENGTH OF numbers IN answer
+DISPLAY "cleared " answer LF
+
+PUSH "pear" TO words
+PUSH "apple" TO words
+SORT words
+DISPLAY words:0 " " words:1 LF
+
+FOR EACH word IN words DO
+    DISPLAY "each " word LF
+REPEAT
+
+# Nested loop with a break
+SET total TO 0
+FOR i FROM 1 TO 10 DO
+    IF i > 4 THEN
+        BREAK
+    END IF
+    IN total SOLVE total + i
+REPEAT
+DISPLAY "break at " total LF
+
+SET total TO 0
+FOR i FROM 1 TO 5 DO
+    IF i = 3 THEN
+        CONTINUE
+    END IF
+    IN total SOLVE total + i
+REPEAT
+DISPLAY "continue " total LF
+
+# Sub-procedures
+CALL BUMP WITH total
+DISPLAY "after bump " total LF
+IN max-age SOLVE DOUBLE WITH total
+DISPLAY "doubled " max-age LF
+
+# STORE QUOTE
+STORE QUOTE IN greeting
+    a quoted line
+    and another
+END QUOTE
+DISPLAY greeting
+
+SUB-PROCEDURE BUMP
+    PARAMETERS:
+    x IS NUMBER
+    PROCEDURE
+    IN x SOLVE x + 1
+    RETURN
+END SUB-PROCEDURE
+
+SUB-PROCEDURE DOUBLE
+    PARAMETERS:
+    x IS NUMBER
+    PROCEDURE
+    IN x SOLVE x * 2
+    RETURN x
+END SUB-PROCEDURE

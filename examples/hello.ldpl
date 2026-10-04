@@ -1,0 +1,5 @@
+-- DATA --
+name IS TEXT
+
+-- PROCEDURE --
+DISPLAY "hello, wasm" LF
